@@ -1,6 +1,20 @@
 # DJI LUT
 
-DJI LUT is a local desktop app for identifying DJI Log footage and restoring it with a matching DJI 3D LUT. It opens a Chinese interface in the default browser and keeps processing on the user's computer.
+DJI LUT identifies DJI Log footage and restores it with a matching DJI 3D LUT. The Electron desktop package opens the Chinese interface in its own window; the standalone Go package opens the same local interface in the default browser. Both use the same on-device Go engine.
+
+## Electron desktop package
+
+The Electron package includes the Go engine with its selected LUTs, FFmpeg, FFprobe, and license notices. Users do not need Node.js, Go, Python, FFmpeg, or network access at runtime. The app defaults to the folder containing the installed app; users can select a different source folder in the native folder picker. Outputs remain under `Output/Standard/` or `Output/Vivid/` unless a different output base is selected.
+
+| Target | Minimum system | Archive |
+| --- | --- | --- |
+| macOS arm64 | macOS 13 | `DJI-LUT-macOS-AppleSilicon.zip` |
+| macOS x86_64 | macOS 13 | `DJI-LUT-macOS-Intel.zip` |
+| Windows x64 | Windows 10 | `DJI-LUT-Windows-x64.zip` |
+
+Electron 44 requires macOS 13 or newer ([upstream platform change](https://www.electronjs.org/docs/latest/breaking-changes)). Electron packages are built separately under `dist/electron/`; the existing Go/browser packages continue to use `dist/`.
+
+See [Electron desktop usage and build instructions](docs/ELECTRON.zh-CN.md) for setup and packaging details. The desktop window can be started in development with `npm start` after preparing its Go sidecar. Run `npm test` for the Electron-side tests.
 
 ## Run a release package
 
@@ -24,7 +38,7 @@ When the output base is blank, outputs are written under `Output/Standard/` or `
 
 A clean source checkout intentionally contains neither LUT bytes nor FFmpeg binaries. It supports source tests, but the app needs a prepared release build to run.
 
-1. Install Go 1.24 or newer (1.26 recommended) and Python 3.10 or newer.
+1. Install Go 1.24 or newer (1.26 recommended) and Python 3.10 or newer. To prepare and package the Electron desktop app, also install Node.js 22.12 or newer and run `npm ci` to install the exact versions in `package-lock.json`.
 2. Test the source without third-party payloads:
 
    ```sh
@@ -54,5 +68,7 @@ A clean source checkout intentionally contains neither LUT bytes nor FFmpeg bina
    ```
 
    The build verifies every LUT and runtime against the tracked lock/catalog, uses the `bundled` Go build tag, and writes packages under ignored `dist/`. Supported targets are `darwin-arm64`, `darwin-amd64`, and `windows-amd64`. A clean clone can run `go test ./...` without steps 3 or 4.
+
+6. To build the Electron app, prepare the same locked runtime and LUT inputs, then run `npm run build:desktop -- darwin-arm64 darwin-amd64 windows-amd64` to build all supported targets, or pass one target. Omit targets to build the native host architecture. `npm run build:engine` builds only the native Go sidecar for `npm start` development. See [Electron desktop usage and build instructions](docs/ELECTRON.zh-CN.md) for the full workflow.
 
 The package build does not copy local validation JSON, screenshots, or version-command output. The project source is MIT-licensed as described in [LICENSE](LICENSE); third-party components have separate terms.

@@ -21,4 +21,8 @@ The release archive does not contain FFmpeg source code. Before redistributing a
 
 The app uses the Go standard library. Each prepared runtime cache includes Go's license text, obtained from the official Go source distribution and pinned in `packaging/license-lock.json`.
 
+## Electron and Chromium
+
+The Electron desktop package uses Electron 44.5.1, which includes Chromium. Electron's MIT license and Chromium's third-party notices are copied into the desktop archive at `licenses/Electron-LICENSE.txt` and `licenses/Chromium-LICENSES.html`. The packaging tool electron-builder 26.15.3 is a build-time dependency and is not included as an application runtime dependency.
+
 The project is not an official DJI application and is not endorsed by DJI.

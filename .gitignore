@@ -1,5 +1,7 @@
 # Local release products and acquired third-party payloads
 /dist/
+/node_modules/
+/desktop/.generated/
 /packaging/cache/
 /packaging/downloads/
 /packaging/tmp/

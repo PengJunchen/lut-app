@@ -2,12 +2,16 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
-  const fragmentToken = new URLSearchParams(location.hash.replace(/^#/, '')).get('token') || '';
+  const desktopBridge = window.djiDesktop;
+  const isDesktop = Boolean(desktopBridge && typeof desktopBridge.request === 'function');
+  const fragmentToken = isDesktop ? '' : new URLSearchParams(location.hash.replace(/^#/, '')).get('token') || '';
   let token = fragmentToken;
-  try {
-    if (fragmentToken) sessionStorage.setItem('dji-lut-access', fragmentToken);
-    else token = sessionStorage.getItem('dji-lut-access') || '';
-  } catch (_) { /* Fragment access still works when session storage is unavailable. */ }
+  if (!isDesktop) {
+    try {
+      if (fragmentToken) sessionStorage.setItem('dji-lut-access', fragmentToken);
+      else token = sessionStorage.getItem('dji-lut-access') || '';
+    } catch (_) { /* Fragment access still works when session storage is unavailable. */ }
+  }
   const inputPath = $('input-path');
   const outputPath = $('output-path');
   const previewButton = $('preview-button');
@@ -20,6 +24,7 @@
   let activeOperation = 'bootstrap';
   let processing = false;
   let cancelPending = false;
+  let exportPending = false;
   let batchLocked = false;
   let shuttingDown = false;
   let batchVersion = 0;
@@ -40,6 +45,37 @@
   const selectedLook = () => document.querySelector('input[name="look"]:checked')?.value || 'standard';
   const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), recursive: $('recursive').checked});
   const api = async (route, options = {}) => {
+    if (isDesktop) {
+      let response;
+      try {
+        response = await desktopBridge.request(route, {
+          method: options.method || 'GET',
+          ...(options.body === undefined ? {} : {body: options.body})
+        });
+      } catch (error) {
+        const status = Number(error?.status);
+        const validStatus = Number.isInteger(status) && status >= 100 && status <= 599;
+        const reachable = validStatus && status < 500 && status !== 401 && status !== 403;
+        setConnection(reachable);
+        const failure = new Error(reachable ? text(error?.message, `请求失败 (${status})`) : '无法连接本机服务，请点击“重新连接”后重试。');
+        failure.cause = error;
+        if (Number.isFinite(status)) failure.status = status;
+        throw failure;
+      }
+      const status = Number(response?.status);
+      const payload = response?.payload ?? {};
+      const ok = Boolean(response?.ok);
+      const validStatus = Number.isInteger(status) && status >= 100 && status <= 599;
+      setConnection(validStatus && status !== 401 && status !== 403 && status < 500);
+      if (!ok) {
+        const message = text(val(payload, 'error', 'message'), `请求失败 (${validStatus ? status : '未知状态'})`);
+        if (status === 401 || status === 403 || status >= 500) setConnection(false);
+        const failure = new Error(message);
+        if (validStatus) failure.status = status;
+        throw failure;
+      }
+      return payload;
+    }
     if (!token) throw new Error('缺少本机访问凭据，请关闭此页面后重新启动应用。');
     const headers = new Headers(options.headers || {});
     headers.set('Authorization', `Bearer ${token}`);
@@ -80,9 +116,9 @@
     connected = ready;
     const node = $('connection');
     node.classList.toggle('disconnected', !ready);
-    node.innerHTML = `<i></i> ${ready ? '本机服务已连接' : '连接中断'}`;
-    reconnectButton.classList.toggle('hidden', ready || !token);
-    if (!ready) $('footer-status').textContent = '本机服务连接中断，请重新连接后继续';
+    node.innerHTML = `<i></i> ${ready ? (isDesktop ? '桌面应用已就绪' : '本机服务已连接') : (isDesktop ? '桌面应用连接中断' : '连接中断')}`;
+    reconnectButton.classList.toggle('hidden', ready || (!isDesktop && !token));
+    if (!ready) $('footer-status').textContent = isDesktop ? '桌面应用连接中断，请重新连接后继续' : '本机服务连接中断，请重新连接后继续';
     syncControls();
   };
   const syncControls = () => {
@@ -98,9 +134,10 @@
     reconnectButton.disabled = Boolean(activeOperation) || shuttingDown;
     $('cancel-button').disabled = !processing || unavailable || cancelPending || shuttingDown;
     $('open-output-button').disabled = unavailable || shuttingDown;
+    $('report-button').disabled = shuttingDown || exportPending || (isDesktop && unavailable);
     $('new-batch-button').disabled = busy;
-    $('header-close-button').disabled = shuttingDown;
-    $('close-button').disabled = shuttingDown;
+    $('header-close-button').disabled = shuttingDown || exportPending;
+    $('close-button').disabled = shuttingDown || exportPending;
   };
   const beginOperation = (name) => {
     activeOperation = name;
@@ -438,7 +475,7 @@
   }
 
   async function reconnect() {
-    if (operationBusy() || !token) return;
+    if (operationBusy() || (!isDesktop && !token)) return;
     beginOperation('reconnect');
     showMessage('正在重新连接本机服务…');
     try {
@@ -535,36 +572,79 @@
     try { await api('/api/open-output', {method:'POST', body:'{}'}); toast('已打开结果文件夹。'); }
     catch (error) { toast(error.message); }
   });
-  $('report-button').addEventListener('click', () => {
-    const report = val(currentState, 'report', 'Report') || currentState;
-    const blob = new Blob([JSON.stringify(report, null, 2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'lut-app-report.json';
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $('report-button').addEventListener('click', async () => {
+    if (!isDesktop) {
+      const report = val(currentState, 'report', 'Report') || currentState;
+      const blob = new Blob([JSON.stringify(report, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'lut-app-report.json';
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
+    if (operationBusy() || !connected || exportPending) return;
+    exportPending = true;
+    beginOperation('export-report');
+    showMessage('正在导出处理报告…');
+    try {
+      const result = await api('/api/export-report', {method:'POST', body:'{}'});
+      if (shuttingDown) return;
+      if (Boolean(val(result, 'cancelled', 'Cancelled'))) {
+        showMessage('已取消导出处理报告。');
+        toast('已取消导出处理报告。');
+        return;
+      }
+      const path = text(val(result, 'path', 'Path')).trim();
+      const saved = path ? `处理报告已保存：${path}` : '处理报告已保存。';
+      showMessage(saved);
+      toast(saved);
+    } catch (error) {
+      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+    } finally {
+      exportPending = false;
+      endOperation('export-report');
+    }
   });
   const closeApplication = async () => {
-    if (shuttingDown) return;
+    if (shuttingDown || exportPending) return;
     shuttingDown = true;
     activeOperation = 'shutdown';
     showMessage('正在关闭应用…');
     syncControls();
     try { await api('/api/shutdown', {method:'POST', body:'{}'}); }
-    catch (_) { /* Server may close the connection immediately after accepting shutdown. */ }
+    catch (error) {
+      if (isDesktop) {
+        shuttingDown = false;
+        activeOperation = '';
+        showMessage(error.message);
+        toast(error.message);
+        syncControls();
+        return;
+      }
+      /* Server may close the connection immediately after accepting shutdown. */
+    }
+    if (isDesktop) {
+      $('footer-status').textContent = '桌面应用正在关闭…';
+      toast('应用正在关闭。');
+      return;
+    }
     try { sessionStorage.removeItem('dji-lut-access'); } catch (_) { /* No persistent data to clear. */ }
     $('footer-status').textContent = '应用已关闭，可以关闭此浏览器标签页。';
     toast('应用已关闭。');
     setTimeout(() => window.close(), 700);
   };
+  if (isDesktop) {
+    $('app-mode-hint').textContent = '桌面版 · 直接处理本机文件，原片保持不变';
+  }
   $('close-button').addEventListener('click', closeApplication);
   $('header-close-button').addEventListener('click', closeApplication);
 
   (async () => {
     syncControls();
     updateOutputDestination();
-    if (!token) {
+    if (!isDesktop && !token) {
       $('connection').classList.add('disconnected');
       $('connection').innerHTML = '<i></i> 缺少访问凭据';
       $('footer-status').textContent = '请从应用自动打开的页面启动';
@@ -585,10 +665,10 @@
       $('recursive').checked = Boolean(val(defaults,'recursive','Recursive'));
       listCatalog(val(boot,'catalog','Catalog') || []);
       updateOutputDestination();
-      $('footer-status').textContent = '本机服务已就绪';
+      $('footer-status').textContent = isDesktop ? '桌面应用已就绪' : '本机服务已就绪';
       await refreshState({recover:true});
     } catch (error) {
-      if (connected) $('footer-status').textContent = '本机服务已连接，但初始化失败';
+      if (connected) $('footer-status').textContent = isDesktop ? '桌面应用已就绪，但初始化失败' : '本机服务已连接，但初始化失败';
       showMessage(error.message);
       toast(error.message);
     } finally {

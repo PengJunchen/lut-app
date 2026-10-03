@@ -1,0 +1,22 @@
+{
+  "name": "dji-lut-desktop",
+  "version": "2.1.0",
+  "private": true,
+  "description": "A local Electron desktop shell for DJI LUT video restoration",
+  "main": "desktop/main.cjs",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "test": "node --test desktop/test/*.test.cjs",
+    "build:desktop": "node desktop/scripts/build.cjs",
+    "build:engine": "node desktop/scripts/build.cjs --engine-only"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  }
+}
