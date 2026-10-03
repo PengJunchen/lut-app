@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>DJI 视频色彩还原</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brandmark" aria-hidden="true">D</div>
+    <div>
+      <h1>DJI 视频色彩还原</h1>
+      <p>本机处理 · 原片保持不变</p>
+    </div>
+    <div class="top-spacer"></div>
+    <span id="connection" class="connection"><i></i> 本机服务已连接</span>
+    <button id="header-close-button" class="button quiet header-close" type="button">关闭应用</button>
+  </header>
+
+  <main>
+    <section class="intro">
+      <div>
+        <p class="eyebrow">批量还原</p>
+        <h2>把原片还原到 Rec.709</h2>
+        <p class="intro-copy">程序读取视频拍摄元数据，按相机和色彩模式选择匹配的 LUT。无法明确判断的素材会原样保留并标记待确认。</p>
+      </div>
+      <div class="intro-icon" aria-hidden="true">◉</div>
+    </section>
+
+    <section class="panel settings" aria-labelledby="settings-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">第 1 步</p>
+          <h2 id="settings-title">选择素材与风格</h2>
+        </div>
+        <span class="local-badge"><span>●</span> 文件不会上传</span>
+      </div>
+
+      <label class="field-label" for="input-path">原片文件夹</label>
+      <div class="path-row">
+        <span class="path-icon" aria-hidden="true">▱</span>
+        <input id="input-path" type="text" autocomplete="off" spellcheck="false" placeholder="输入或粘贴文件夹路径">
+      </div>
+      <p class="field-hint">默认使用应用所在文件夹。可粘贴任意本机文件夹路径。</p>
+
+      <label class="field-label output-label" for="output-path">结果保存基础目录</label>
+      <div class="path-row">
+        <span class="path-icon output-icon" aria-hidden="true">↳</span>
+        <input id="output-path" type="text" autocomplete="off" spellcheck="false" placeholder="默认：原片文件夹/Output">
+      </div>
+      <p class="field-hint">预览中会显示最终结果文件夹；应用会按所选风格建立 Standard 或 Vivid 子文件夹。</p>
+
+      <div class="choice-row">
+        <fieldset class="look-choice">
+          <legend>色彩风格</legend>
+          <label class="radio-card">
+            <input type="radio" name="look" value="standard" checked>
+            <span class="radio-dot"></span>
+            <span><b>标准</b><small>DJI 原生标准风格</small></span>
+          </label>
+          <label class="radio-card">
+            <input type="radio" name="look" value="vivid">
+            <span class="radio-dot"></span>
+            <span><b>鲜艳</b><small>仅使用相机对应的 Vivid LUT</small></span>
+          </label>
+        </fieldset>
+        <label class="check-card" for="recursive">
+          <input id="recursive" type="checkbox">
+          <span class="checkmark" aria-hidden="true"></span>
+          <span><b>包含子文件夹</b><small>默认只扫描当前文件夹</small></span>
+        </label>
+      </div>
+
+      <div class="supported" id="supported-luts">
+        <span class="supported-icon" aria-hidden="true">✓</span>
+        <div><b>随应用提供的 LUT</b><div id="catalog-list" class="catalog-list">正在读取可用 LUT…</div></div>
+      </div>
+
+      <div class="action-row">
+        <button id="preview-button" class="button primary" type="button"><span aria-hidden="true">⌕</span> 扫描并预览</button>
+        <button id="run-button" class="button start" type="button" disabled><span aria-hidden="true">▶</span> 开始还原</button>
+        <span id="settings-message" class="inline-message" role="status"></span>
+      </div>
+    </section>
+
+    <section id="preview-section" class="panel results hidden" aria-labelledby="preview-title">
+      <div class="section-heading result-heading">
+        <div><p class="eyebrow">第 2 步</p><h2 id="preview-title">扫描预览</h2></div>
+        <span id="preview-count" class="count-badge"></span>
+      </div>
+      <div class="run-settings" id="run-settings"></div>
+      <div class="notice" id="preview-notice"><span aria-hidden="true">ⓘ</span><span>只扫描视频格式，并依据相机与视频元数据识别；不会按文件名或画面猜测模式。无法确认的素材会复制并标记“待确认”。</span></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>视频文件</th><th>拍摄模式</th><th>相机</th><th>计划使用 / 候选 LUT</th><th>计划操作</th><th>说明</th></tr></thead>
+          <tbody id="preview-rows"></tbody>
+        </table>
+      </div>
+      <div id="preview-empty" class="empty-state hidden"><span aria-hidden="true">▱</span><b>没有找到可处理的视频</b><small>检查文件夹路径，或勾选“包含子文件夹”。</small></div>
+    </section>
+
+    <section id="progress-section" class="panel results hidden" aria-labelledby="progress-title">
+      <div class="section-heading result-heading">
+        <div><p class="eyebrow">处理状态</p><h2 id="progress-title">正在还原</h2></div>
+        <span id="run-state" class="state-badge running"><i></i> 正在处理</span>
+      </div>
+      <div class="progress-overview">
+        <div class="progress-main">
+          <div class="progress-label"><b id="progress-caption">准备中</b><span id="progress-numbers">0 / 0</span></div>
+          <div class="progress-track"><progress id="progress-fill" max="100" value="0" aria-label="批次处理进度"></progress></div>
+        </div>
+        <button id="cancel-button" class="button danger" type="button">取消处理</button>
+      </div>
+      <div class="summary-grid" id="summary-grid"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>视频文件</th><th>拍摄模式</th><th>相机</th><th>实际使用 / 候选 LUT</th><th>状态</th><th>进度</th><th>说明</th></tr></thead>
+          <tbody id="progress-rows"></tbody>
+        </table>
+      </div>
+      <details class="logs" open>
+        <summary>处理日志</summary>
+        <div id="log-list" class="log-list" aria-live="polite"></div>
+      </details>
+      <div id="complete-actions" class="complete-actions hidden">
+        <div id="complete-message" role="status"></div>
+        <div class="action-row">
+          <button id="report-button" class="button secondary" type="button">导出处理报告</button>
+          <button id="open-output-button" class="button secondary" type="button">打开结果文件夹</button>
+          <button id="close-button" class="button quiet" type="button">关闭应用</button>
+        </div>
+      </div>
+    </section>
+
+    <footer><span>DJI LUT · 本机运行</span><span id="footer-status">正在连接本机服务…</span></footer>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

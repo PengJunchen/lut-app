@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "targets": {
+    "darwin-arm64": {
+      "platform": "macOS arm64",
+      "min_os": "macOS 12.0",
+      "tools": {
+        "ffmpeg": {
+          "version": "9.0.2",
+          "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+          "archive": "darwin-arm64-ffmpeg-9.0.2.zip",
+          "archive_sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+          "member": "ffmpeg",
+          "binary_sha256": "2e11c6f90993cdb79fff84d3f90044d28316b310e75b3e030cfc9a54f2c9d384"
+        },
+        "ffprobe": {
+          "version": "9.0.2",
+          "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+          "archive": "darwin-arm64-ffprobe-9.0.2.zip",
+          "archive_sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
+          "member": "ffprobe",
+          "binary_sha256": "2738aa46a7f9acbc8ab09a6715554c90f7de603171ac403726765685df6a0059"
+        }
+      }
+    },
+    "darwin-amd64": {
+      "platform": "macOS x86_64",
+      "min_os": "macOS 12.0",
+      "tools": {
+        "ffmpeg": {
+          "version": "8.1.2-tessus",
+          "url": "https://evermeet.cx/ffmpeg/ffmpeg-8.1.2.zip",
+          "archive": "ffmpeg-8.1.2-macos-intel.zip",
+          "archive_sha256": "e91df72a1ee7c26606f90dd2dd4dcccc6a75140ff9ea6fdd50faae828b82ba69",
+          "member": "ffmpeg",
+          "binary_sha256": "60725ea0467ccaf900bf294d3567c302a802dc661f03bdde6aa7ecc9ccf05c4f"
+        },
+        "ffprobe": {
+          "version": "8.1.2-tessus",
+          "url": "https://evermeet.cx/ffmpeg/ffprobe-8.1.2.zip",
+          "archive": "ffprobe-8.1.2-macos-intel.zip",
+          "archive_sha256": "399b93f0b9862f69767afa343e90c2f48d7e7958cadbb6deb76a012d0e3b7ce3",
+          "member": "ffprobe",
+          "binary_sha256": "a45033d0e45ede2683cee401545becd7ef1a9873ea6f640c0acf0b90f7730b67"
+        }
+      }
+    },
+    "windows-amd64": {
+      "platform": "Windows x64",
+      "min_os": "Windows 10",
+      "tools": {
+        "ffmpeg": {
+          "version": "8.1.2",
+          "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip",
+          "archive": "ffmpeg-8.1.2-essentials_build.zip",
+          "archive_sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec",
+          "member": "ffmpeg-8.1.2-essentials_build/bin/ffmpeg.exe",
+          "binary_sha256": "1326dde4c84ff1f96fe6b8916c5bed29e163e9b5dccf995f6f3db069d143ec5e"
+        },
+        "ffprobe": {
+          "version": "8.1.2",
+          "url": "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip",
+          "archive": "ffmpeg-8.1.2-essentials_build.zip",
+          "archive_sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec",
+          "member": "ffmpeg-8.1.2-essentials_build/bin/ffprobe.exe",
+          "binary_sha256": "b49ccc7c6547b141ad5a2f6ec69cc04323d7133d7704d70b331b904c63eecb07"
+        }
+      }
+    }
+  }
+}

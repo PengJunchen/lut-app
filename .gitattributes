@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.cube binary
+*.exe binary
+*.tgz binary
+*.zip binary

@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "camera": "pocket4p",
+      "profile": "dlog",
+      "look": "standard",
+      "file": "luts/DJI OSMO Pocket 4P D-Log to Rec.709 V2.0 size33.cube",
+      "sha256": "04757dd8dd669d60a2d58ea1834f185616ca9952922c168fe69dba29bb2be1b1",
+      "grid": 33,
+      "source_url": "https://www.dji.com/lut",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "pocket4p",
+      "profile": "dlog",
+      "look": "vivid",
+      "file": "luts/DJI OSMO Pocket 4P D-Log to Rec.709 vivid V2.0 size33.cube",
+      "sha256": "95afff501afd0343c3c1a5f1cf7bc34c8d5ed5765474444b58e9db8a8b7e58fb",
+      "grid": 33,
+      "source_url": "https://www.dji.com/lut",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "pocket4p",
+      "profile": "dlog2",
+      "look": "standard",
+      "file": "luts/DJI OSMO Pocket 4P D-Log2 to Rec.709 V1.0 size65.cube",
+      "sha256": "fa6537da3235c281da6e361806d3e9ee93f5532ad95471878c5d6c05157caa9c",
+      "grid": 65,
+      "source_url": "https://www.dji.com/lut",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "pocket4p",
+      "profile": "dlog2",
+      "look": "vivid",
+      "file": "luts/DJI OSMO Pocket 4P D-Log2 to Rec.709 vivid V1.0 size65.cube",
+      "sha256": "32b9b49d52fde38f95cbc1d0a4f486fcbf176eb82d28481b25d4f9a0b006734e",
+      "grid": 65,
+      "source_url": "https://www.dji.com/lut",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "pocket3",
+      "profile": "dlogm",
+      "look": "standard",
+      "file": "luts/dji-osmo-pocket-3-dlogm-rec709-v1.cube",
+      "sha256": "b18162854ab47702068410c33afa98a8cb6eef159fc5a04ce0e65fad0fd8947e",
+      "grid": 33,
+      "source_url": "https://www-dl.djicdn.com/5e45168b46b342d5b88f72c458ba6e79/OP3%20LUT%E6%96%87%E4%BB%B6%E7%89%B9%E6%AE%8A%E5%A4%84%E7%90%86/DJI%20OSMO%20Pocket%203%20D-Log%20M%20to%20Rec.709%20V1.cube",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "action5pro",
+      "profile": "dlogm",
+      "look": "vivid",
+      "file": "luts/dji-osmo-action-5-pro-dlogm-rec709-vivid-v1.cube",
+      "sha256": "b18162854ab47702068410c33afa98a8cb6eef159fc5a04ce0e65fad0fd8947e",
+      "grid": 33,
+      "source_url": "https://terra-1-g.djicdn.com/851d20f7b9f64838a34cd02351370894/AC204%E8%BD%AF%E4%BB%B6/DJI%20OSMO%20Action%205%20Pro%20D-Log%20M%20to%20Rec.709%20V1.cube",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "action4",
+      "profile": "dlogm",
+      "look": "vivid",
+      "file": "luts/dji-osmo-action-4-dlogm-rec709-vivid-v1.cube",
+      "sha256": "b18162854ab47702068410c33afa98a8cb6eef159fc5a04ce0e65fad0fd8947e",
+      "grid": 33,
+      "source_url": "https://terra-1-g.djicdn.com/851d20f7b9f64838a34cd02351370894/203/DJI%20OSMO%20Action%204%20D-Log%20M%20to%20Rec.709%20V1.cube",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "air3s",
+      "profile": "dlogm",
+      "look": "standard",
+      "file": "luts/dji-air-3s-dlogm-rec709-v1.cube",
+      "sha256": "b18162854ab47702068410c33afa98a8cb6eef159fc5a04ce0e65fad0fd8947e",
+      "grid": 33,
+      "source_url": "https://terra-1-g.djicdn.com/851d20f7b9f64838a34cd02351370894/234_lut/DJI%20Air%203S%20%20D-Log%20M%20to%20Rec.709%20V1_.cube",
+      "source_name": "DJI"
+    },
+    {
+      "camera": "air3",
+      "profile": "dlogm",
+      "look": "standard",
+      "file": "luts/dji-air-3-dlogm-rec709-v1.cube",
+      "sha256": "b18162854ab47702068410c33afa98a8cb6eef159fc5a04ce0e65fad0fd8947e",
+      "grid": 33,
+      "source_url": "https://terra-1-g.djicdn.com/851d20f7b9f64838a34cd02351370894/DJI%20Air%203%20Lut/DJI%20Air%203%20D-Log%20M%20to%20Rec.709%20V1_.cube",
+      "source_name": "DJI"
+    }
+  ]
+}

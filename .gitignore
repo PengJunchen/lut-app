@@ -1,0 +1,37 @@
+# Local release products and acquired third-party payloads
+/dist/
+/packaging/cache/
+/packaging/downloads/
+/packaging/tmp/
+/build/
+/.build/
+/.tmp/
+/tmp/
+/assets/luts/
+/internal/bundle/runtimes/
+
+# Local verification artifacts and editor/OS state
+/packaging/validation-*.json
+/packaging/ui-*.jpg
+/.work/
+/.workfixtures/
+/.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.test
+*.out
+*.log
+**/Output/
+**/output/
+*.[mM][pP]4
+*.[mM]4[vV]
+*.[mM][oO][vV]
+*.[mM][kK][vV]
+*.[aA][vV][iI]
+*.[wW][eE][bB][mM]
+*.[mM][tT][sS]
+*.[mM]2[tT][sS]
+*.[mM][pP][gG]
+*.[mM][pP][eE][gG]
