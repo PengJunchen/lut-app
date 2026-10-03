@@ -16,7 +16,8 @@
       <p>本机处理 · 原片保持不变</p>
     </div>
     <div class="top-spacer"></div>
-    <span id="connection" class="connection"><i></i> 本机服务已连接</span>
+    <span id="connection" class="connection" role="status" aria-live="polite"><i></i> 本机服务已连接</span>
+    <button id="reconnect-button" class="button quiet reconnect-button hidden" type="button">重新连接</button>
     <button id="header-close-button" class="button quiet header-close" type="button">关闭应用</button>
   </header>
 
@@ -40,18 +41,25 @@
       </div>
 
       <label class="field-label" for="input-path">原片文件夹</label>
-      <div class="path-row">
-        <span class="path-icon" aria-hidden="true">▱</span>
-        <input id="input-path" type="text" autocomplete="off" spellcheck="false" placeholder="输入或粘贴文件夹路径">
+      <div class="path-controls">
+        <div class="path-row">
+          <span class="path-icon" aria-hidden="true">▱</span>
+          <input id="input-path" type="text" autocomplete="off" spellcheck="false" placeholder="输入或粘贴文件夹路径">
+        </div>
+        <button id="input-select-button" class="button path-button" type="button" aria-label="选择原片文件夹">选择文件夹</button>
       </div>
-      <p class="field-hint">默认使用应用所在文件夹。可粘贴任意本机文件夹路径。</p>
+      <p class="field-hint">可粘贴路径，也可打开系统文件夹选择器；默认使用应用所在文件夹。</p>
 
       <label class="field-label output-label" for="output-path">结果保存基础目录</label>
-      <div class="path-row">
-        <span class="path-icon output-icon" aria-hidden="true">↳</span>
-        <input id="output-path" type="text" autocomplete="off" spellcheck="false" placeholder="默认：原片文件夹/Output">
+      <div class="path-controls">
+        <div class="path-row">
+          <span class="path-icon output-icon" aria-hidden="true">↳</span>
+          <input id="output-path" type="text" autocomplete="off" spellcheck="false" placeholder="默认：原片文件夹/Output">
+        </div>
+        <button id="output-select-button" class="button path-button" type="button" aria-label="选择结果保存基础目录">选择文件夹</button>
+        <button id="output-reset-button" class="button path-button path-reset" type="button">恢复默认位置</button>
       </div>
-      <p class="field-hint">预览中会显示最终结果文件夹；应用会按所选风格建立 Standard 或 Vivid 子文件夹。</p>
+      <p class="field-hint">留空时保存到原片文件夹/Output。<span id="output-destination" class="output-destination"></span></p>
 
       <div class="choice-row">
         <fieldset class="look-choice">
@@ -92,6 +100,13 @@
         <span id="preview-count" class="count-badge"></span>
       </div>
       <div class="run-settings" id="run-settings"></div>
+      <div class="preview-summary" id="preview-summary" aria-live="polite">
+        <div class="preview-metric"><span>可还原</span><b id="preview-restore-count">0</b></div>
+        <div class="preview-metric"><span>原样保留</span><b id="preview-copy-count">0</b></div>
+        <div class="preview-metric review"><span>待核查（含于原样保留）</span><b id="preview-review-count">0</b></div>
+      </div>
+      <p class="preview-summary-hint">待核查是原样保留视频的子集，不会重复计入视频总数。</p>
+      <div id="preview-stale" class="notice stale-notice hidden" role="status">设置已改变，旧预览已失效；请重新扫描并预览。</div>
       <div class="notice" id="preview-notice"><span aria-hidden="true">ⓘ</span><span>只扫描视频格式，并依据相机与视频元数据识别；不会按文件名或画面猜测模式。无法确认的素材会复制并标记“待确认”。</span></div>
       <div class="table-wrap">
         <table>
@@ -115,6 +130,7 @@
         <button id="cancel-button" class="button danger" type="button">取消处理</button>
       </div>
       <div class="summary-grid" id="summary-grid"></div>
+      <p class="preview-summary-hint progress-summary-hint">待确认项目已原样保留，且包含在原样复制数量中。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>视频文件</th><th>拍摄模式</th><th>相机</th><th>实际使用 / 候选 LUT</th><th>状态</th><th>进度</th><th>说明</th></tr></thead>
@@ -128,6 +144,7 @@
       <div id="complete-actions" class="complete-actions hidden">
         <div id="complete-message" role="status"></div>
         <div class="action-row">
+          <button id="new-batch-button" class="button primary" type="button">开始新批次</button>
           <button id="report-button" class="button secondary" type="button">导出处理报告</button>
           <button id="open-output-button" class="button secondary" type="button">打开结果文件夹</button>
           <button id="close-button" class="button quiet" type="button">关闭应用</button>

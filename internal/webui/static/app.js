@@ -12,9 +12,18 @@
   const outputPath = $('output-path');
   const previewButton = $('preview-button');
   const runButton = $('run-button');
+  const reconnectButton = $('reconnect-button');
   let hasPreview = false;
   let previewSnapshot = '';
   let currentState = null;
+  let connected = false;
+  let activeOperation = 'bootstrap';
+  let processing = false;
+  let cancelPending = false;
+  let batchLocked = false;
+  let shuttingDown = false;
+  let batchVersion = 0;
+  let stateRecoveryEnabled = true;
   let pollTimer = null;
   let toastTimer = null;
 
@@ -35,11 +44,27 @@
     const headers = new Headers(options.headers || {});
     headers.set('Authorization', `Bearer ${token}`);
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const response = await fetch(route, {...options, headers, cache:'no-store', credentials:'same-origin'});
+    let response;
+    try {
+      response = await fetch(route, {...options, headers, cache:'no-store', credentials:'same-origin'});
+    } catch (error) {
+      setConnection(false);
+      const unavailable = new Error('无法连接本机服务，请点击“重新连接”后重试。');
+      unavailable.cause = error;
+      throw unavailable;
+    }
+    setConnection(response.status !== 401 && response.status !== 403 && response.status < 500);
     const body = await response.text();
     let payload = {};
     try { payload = body ? JSON.parse(body) : {}; } catch (_) { payload = {message: body}; }
-    if (!response.ok) throw new Error(text(val(payload, 'error', 'message'), `请求失败 (${response.status})`));
+    if (!response.ok) {
+      const message = text(val(payload, 'error', 'message'), `请求失败 (${response.status})`);
+      if (response.status === 401 || response.status === 403) setConnection(false);
+      if (response.status >= 500) setConnection(false);
+      const failure = new Error(message);
+      failure.status = response.status;
+      throw failure;
+    }
     return payload;
   };
   const toast = (message) => {
@@ -50,25 +75,86 @@
     toastTimer = setTimeout(() => node.classList.remove('show'), 2600);
   };
   const showMessage = (message = '') => { $('settings-message').textContent = message; };
-  const setBusy = (busy) => {
-    previewButton.disabled = busy;
-    runButton.disabled = busy || !hasPreview;
-    inputPath.disabled = busy;
-    outputPath.disabled = busy;
-    $('recursive').disabled = busy;
-    document.querySelectorAll('input[name="look"]').forEach((node) => node.disabled = busy);
+  const operationBusy = () => Boolean(activeOperation) || processing || shuttingDown;
+  const setConnection = (ready) => {
+    connected = ready;
+    const node = $('connection');
+    node.classList.toggle('disconnected', !ready);
+    node.innerHTML = `<i></i> ${ready ? '本机服务已连接' : '连接中断'}`;
+    reconnectButton.classList.toggle('hidden', ready || !token);
+    if (!ready) $('footer-status').textContent = '本机服务连接中断，请重新连接后继续';
+    syncControls();
+  };
+  const syncControls = () => {
+    const busy = operationBusy();
+    const locked = busy || batchLocked;
+    const unavailable = !connected;
+    for (const id of ['input-path', 'output-path', 'input-select-button', 'output-select-button', 'output-reset-button', 'recursive']) {
+      $(id).disabled = locked || unavailable;
+    }
+    document.querySelectorAll('input[name="look"]').forEach((node) => node.disabled = locked || unavailable);
+    previewButton.disabled = locked || unavailable || !inputPath.value.trim();
+    runButton.disabled = locked || unavailable || !hasPreview;
+    reconnectButton.disabled = Boolean(activeOperation) || shuttingDown;
+    $('cancel-button').disabled = !processing || unavailable || cancelPending || shuttingDown;
+    $('open-output-button').disabled = unavailable || shuttingDown;
+    $('new-batch-button').disabled = busy;
+    $('header-close-button').disabled = shuttingDown;
+    $('close-button').disabled = shuttingDown;
+  };
+  const beginOperation = (name) => {
+    activeOperation = name;
+    syncControls();
+  };
+  const endOperation = (name) => {
+    if (activeOperation === name) activeOperation = '';
+    syncControls();
+  };
+  const outputBase = () => {
+    const selected = outputPath.value.trim();
+    if (selected) return selected;
+    const input = inputPath.value.trim();
+    if (!input) return '原片文件夹/Output';
+    const separator = /^[A-Za-z]:\\/.test(input) || input.includes('\\') ? '\\' : '/';
+    return `${input.replace(/[\\/]+$/, '')}${separator}Output`;
+  };
+  const finalOutputDestination = (look = selectedLook()) => {
+    const base = outputBase();
+    const separator = /^[A-Za-z]:\\/.test(base) || base.includes('\\') ? '\\' : '/';
+    return `${base.replace(/[\\/]+$/, '')}${separator}${look === 'vivid' ? 'Vivid' : 'Standard'}`;
+  };
+  const sameDirectory = (left, right) => {
+    const normalize = (path) => {
+      const value = text(path).trim();
+      const clean = value.replace(/[\\/]+$/, '') || (value.startsWith('/') ? '/' : value);
+      return /^[A-Za-z]:[\\/]|^\\\\/.test(value) ? clean.toLowerCase() : clean;
+    };
+    return normalize(left) === normalize(right);
+  };
+  const updateOutputDestination = () => {
+    $('output-destination').textContent = `最终目的地：${finalOutputDestination()}`;
   };
   const invalidatePreview = () => {
-    if (hasPreview && JSON.stringify(settings()) !== previewSnapshot) {
+    updateOutputDestination();
+    if (previewSnapshot && JSON.stringify(settings()) !== previewSnapshot) {
       hasPreview = false;
-      runButton.disabled = true;
-      showMessage('选项已改变，请重新扫描并预览。');
+      previewSnapshot = '';
+      $('preview-stale').classList.remove('hidden');
+      showMessage('设置已改变，旧预览已失效；请重新扫描并预览。');
+      syncControls();
     }
   };
-  inputPath.addEventListener('input', invalidatePreview);
-  outputPath.addEventListener('input', invalidatePreview);
+  inputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
+  outputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
   $('recursive').addEventListener('change', invalidatePreview);
   document.querySelectorAll('input[name="look"]').forEach((node) => node.addEventListener('change', invalidatePreview));
+  $('input-select-button').addEventListener('click', () => chooseFolder('input'));
+  $('output-select-button').addEventListener('click', () => chooseFolder('output'));
+  $('output-reset-button').addEventListener('click', () => {
+    outputPath.value = '';
+    invalidatePreview();
+  });
+  reconnectButton.addEventListener('click', reconnect);
 
   function listCatalog(catalog) {
     const node = $('catalog-list');
@@ -215,20 +301,38 @@
     }
     return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(runLutName(item))}</span></td><td><span class="status-tag ${statusClass(item)}">${esc(statusLabel(item))}</span></td><td class="progress-cell"><progress class="mini-progress" max="100" value="${percent}" aria-label="${esc(baseName(input))}进度"></progress>${percent ? `${Math.round(percent)}%` : '—'}</td><td title="${esc(rawReason)}">${esc(text(val(item,'error','Error'), reason))}</td></tr>`;
   }
+  function willEncode(item) {
+    const action = text(val(item, 'action', 'Action')).toLowerCase();
+    const status = text(val(item, 'status', 'Status')).toLowerCase();
+    return action === 'encode' || status === 'planned_encode';
+  }
+  function needsReview(item) {
+    const status = text(val(item, 'status', 'Status')).toLowerCase();
+    return Boolean(val(item, 'needs_review', 'NeedsReview')) || status.includes('review');
+  }
   function renderPlan(plan) {
     const items = val(plan, 'items', 'Items') || [];
     const input = text(val(plan, 'input_root', 'inputRoot', 'InputRoot'), settings().input);
-    const output = text(val(plan, 'output_root', 'outputRoot', 'OutputRoot'), settings().output || `${input}/Output`);
+    const output = text(val(plan, 'output_root', 'outputRoot', 'OutputRoot'), finalOutputDestination());
     const look = text(val(plan, 'look', 'Look'), settings().look);
     const recursive = Boolean(val(plan, 'recursive', 'Recursive') ?? settings().recursive);
-    $('run-settings').innerHTML = `<span class="setting-chip">原片：${esc(input)}</span><span class="setting-chip">输出：${esc(output)}</span><span class="setting-chip">风格：${look === 'vivid' ? '鲜艳' : '标准'}</span><span class="setting-chip">子目录：${recursive ? '包含' : '不包含'}</span>`;
+    const restoreCount = items.filter(willEncode).length;
+    const copyCount = Math.max(0, items.length - restoreCount);
+    const reviewCount = items.filter((item) => !willEncode(item) && needsReview(item)).length;
+    $('run-settings').innerHTML = `<span class="setting-chip">原片：${esc(input)}</span><span class="setting-chip">最终保存位置：${esc(output)}</span><span class="setting-chip">风格：${look === 'vivid' ? '鲜艳' : '标准'}</span><span class="setting-chip">子目录：${recursive ? '包含' : '不包含'}</span>`;
     $('preview-count').textContent = `${items.length} 个视频`;
+    $('preview-restore-count').textContent = restoreCount;
+    $('preview-copy-count').textContent = copyCount;
+    $('preview-review-count').textContent = reviewCount;
     $('preview-rows').innerHTML = items.map((item) => itemRow(item, true)).join('');
     $('preview-empty').classList.toggle('hidden', items.length > 0);
     $('preview-rows').parentElement.classList.toggle('hidden', items.length === 0);
+    $('preview-stale').classList.add('hidden');
     $('preview-section').classList.remove('hidden');
-    hasPreview = true;
-    runButton.disabled = false;
+    hasPreview = items.length > 0;
+    previewSnapshot = JSON.stringify(settings());
+    if (!hasPreview) showMessage('没有找到可处理的视频；请检查路径或扫描选项。');
+    syncControls();
     $('preview-section').scrollIntoView({behavior:'smooth', block:'start'});
   }
 
@@ -240,6 +344,8 @@
     const running = Boolean(val(state, 'running', 'Running'));
     const finished = Boolean(val(state, 'finished', 'done', 'Finished', 'Done'));
     const cancelled = Boolean(val(state, 'cancelled', 'Cancelled'));
+    processing = running;
+    batchLocked = !running && (finished || cancelled || Boolean(val(state,'error','Error')));
     const summary = val(state, 'summary', 'Summary') || {};
     const items = val(state, 'items', 'Items') || [];
     const completed = Number(val(state, 'completed', 'Completed')) || 0;
@@ -264,8 +370,7 @@
     if (!items.length && val(state, 'plan', 'Plan')) $('progress-rows').innerHTML = (val(val(state,'plan','Plan'),'items','Items') || []).map((item) => itemRow(item,false)).join('');
     const logs = val(state, 'logs', 'Logs') || [];
     $('log-list').innerHTML = logs.map((entry) => `<div class="log-entry">${esc(typeof entry === 'string' ? entry : text(val(entry,'message','Message')))}</div>`).join('');
-    $('cancel-button').disabled = !running;
-    setBusy(running);
+    $('cancel-button').disabled = !running || !connected;
     if (finished || cancelled || (!running && val(state,'error','Error'))) {
       $('complete-actions').classList.remove('hidden');
       const encodedCount = Number(val(summary,'encoded','Encoded')) || 0;
@@ -274,60 +379,157 @@
       const failedCount = Number(val(summary,'failed','Failed')) || 0;
       const counts = `套用 LUT ${encodedCount} 个，复制 ${copiedCount} 个，待确认 ${reviewCount} 个，失败 ${failedCount} 个。`;
       const ending = cancelled ? '任务已取消。' : failedCount ? '批次结束，部分文件失败。' : reviewCount ? '批次结束，仍有文件待确认。' : '批次处理完成。';
-      $('complete-message').textContent = text(val(state,'error','Error'), `${ending}${counts}`);
-      $('footer-status').textContent = cancelled ? '任务已取消' : '处理已结束';
+      const completeMessage = text(val(state,'error','Error'), `${ending}${counts}`);
+      $('complete-message').textContent = completeMessage;
+      if (!shuttingDown && activeOperation !== 'picker') showMessage(completeMessage);
+      if (connected) $('footer-status').textContent = cancelled ? '任务已取消' : '处理已结束';
     } else {
       $('complete-actions').classList.add('hidden');
-      $('footer-status').textContent = running ? '正在处理文件…' : '本机服务已就绪';
+      if (running && !shuttingDown && activeOperation !== 'picker') showMessage('正在还原，请在下方查看进度。');
+      if (connected) $('footer-status').textContent = running ? '正在处理文件…' : '本机服务已就绪';
     }
+    syncControls();
   }
-  async function refreshState() {
+  async function refreshState({recover = false} = {}) {
+    const version = batchVersion;
     try {
       const state = await api('/api/state');
-      if (!val(state, 'running', 'Running') && !val(state, 'finished', 'done', 'Finished', 'Done') && !val(state, 'input_root', 'inputRoot', 'InputRoot')) return;
+      if (version !== batchVersion || (activeOperation && !recover) || (!stateRecoveryEnabled && recover)) return;
+      const running = Boolean(val(state, 'running', 'Running'));
+      const finished = Boolean(val(state, 'finished', 'done', 'Finished', 'Done'));
+      const terminal = Boolean(val(state, 'cancelled', 'Cancelled')) || Boolean(val(state, 'error', 'Error'));
+      if (!running && !finished && !terminal) return;
       renderState(state);
-      if (!val(state, 'running', 'Running') && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (!running && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     } catch (error) {
-      $('footer-status').textContent = '本机服务连接中断';
-      $('connection').classList.add('disconnected');
-      $('connection').innerHTML = '<i></i> 连接中断';
+      if (!shuttingDown && activeOperation !== 'picker') showMessage(error.message);
+      if (pollTimer && !processing) { clearInterval(pollTimer); pollTimer = null; }
     }
   }
 
-  previewButton.addEventListener('click', async () => {
+  async function chooseFolder(target) {
+    if (operationBusy() || batchLocked || !connected) return;
+    const path = target === 'input' ? inputPath.value.trim() : outputPath.value.trim() || outputBase();
+    beginOperation('picker');
+    showMessage(target === 'input' ? '正在打开原片文件夹选择器…' : '正在打开结果目录选择器…');
+    try {
+      const result = await api('/api/select-folder', {method:'POST', body:JSON.stringify({target, path})});
+      if (shuttingDown) return;
+      if (Boolean(val(result, 'cancelled', 'Cancelled'))) {
+        showMessage('已取消选择，原路径保持不变。');
+        return;
+      }
+      const chosen = text(val(result, 'path', 'Path')).trim();
+      if (!chosen) throw new Error('文件夹选择器没有返回目录路径。');
+      const currentPath = target === 'input' ? inputPath.value.trim() : outputPath.value.trim() || outputBase();
+      if (sameDirectory(chosen, currentPath)) {
+        showMessage(hasPreview ? '路径未改变，现有预览仍有效。' : '路径未改变；需要处理时请重新扫描并预览。');
+        return;
+      }
+      if (target === 'input') inputPath.value = chosen;
+      else outputPath.value = chosen;
+      invalidatePreview();
+      showMessage('文件夹已更新，请重新扫描并预览。');
+    } catch (error) {
+      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+    } finally {
+      endOperation('picker');
+    }
+  }
+
+  async function reconnect() {
+    if (operationBusy() || !token) return;
+    beginOperation('reconnect');
+    showMessage('正在重新连接本机服务…');
+    try {
+      const boot = await api('/api/bootstrap');
+      if (shuttingDown) return;
+      listCatalog(val(boot,'catalog','Catalog') || []);
+      if (stateRecoveryEnabled) await refreshState({recover:true});
+      if (connected && !shuttingDown) {
+        $('footer-status').textContent = processing ? '正在处理文件…' : '本机服务已就绪';
+        if (!batchLocked) showMessage('已重新连接，可以继续操作。');
+      }
+    } catch (error) {
+      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+    } finally {
+      endOperation('reconnect');
+    }
+  }
+
+  async function scanPreview() {
+    if (operationBusy() || batchLocked || !connected) return;
     const request = settings();
     if (!request.input) { showMessage('请填写原片文件夹路径。'); inputPath.focus(); return; }
-    showMessage('正在扫描和读取视频元数据…');
-    setBusy(true);
-    $('preview-section').classList.add('hidden');
+    stateRecoveryEnabled = false;
     hasPreview = false;
+    previewSnapshot = '';
+    $('preview-stale').classList.add('hidden');
+    $('preview-section').classList.add('hidden');
+    beginOperation('preview');
+    showMessage('正在扫描和读取视频元数据…');
     try {
       const plan = await api('/api/preview', {method:'POST', body:JSON.stringify(request)});
+      if (shuttingDown) return;
       renderPlan(val(plan,'plan','Plan') || plan);
-      previewSnapshot = JSON.stringify(request);
-      showMessage('预览已就绪，请确认每个文件的处理方式。');
+      showMessage(hasPreview ? '预览已就绪，请确认每个文件的处理方式。' : '没有找到可处理的视频；请检查路径或扫描选项。');
     } catch (error) {
-      showMessage(error.message);
-      toast(error.message);
-    } finally { setBusy(false); runButton.disabled = !hasPreview; }
-  });
+      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+    } finally {
+      endOperation('preview');
+    }
+  }
+  previewButton.addEventListener('click', scanPreview);
 
   runButton.addEventListener('click', async () => {
-    if (!hasPreview) return;
+    if (operationBusy() || batchLocked || !connected || !hasPreview) return;
     if (JSON.stringify(settings()) !== previewSnapshot) { invalidatePreview(); return; }
-    setBusy(true);
+    beginOperation('starting');
+    stateRecoveryEnabled = true;
+    showMessage('正在启动还原任务…');
     try {
       const state = await api('/api/run', {method:'POST', body:JSON.stringify(settings())});
+      if (shuttingDown) return;
       $('progress-section').classList.remove('hidden');
       renderState(state);
-      if (!pollTimer) pollTimer = setInterval(refreshState, 900);
+      if (!pollTimer && processing) pollTimer = setInterval(refreshState, 900);
       $('progress-section').scrollIntoView({behavior:'smooth', block:'start'});
-    } catch (error) { setBusy(false); toast(error.message); showMessage(error.message); }
+    } catch (error) {
+      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+    } finally {
+      endOperation('starting');
+    }
+  });
+
+  $('new-batch-button').addEventListener('click', () => {
+    if (operationBusy()) return;
+    batchVersion++;
+    stateRecoveryEnabled = false;
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    currentState = null;
+    processing = false;
+    batchLocked = false;
+    hasPreview = false;
+    previewSnapshot = '';
+    $('preview-section').classList.add('hidden');
+    $('progress-section').classList.add('hidden');
+    $('complete-actions').classList.add('hidden');
+    $('preview-stale').classList.add('hidden');
+    $('preview-rows').innerHTML = '';
+    $('progress-rows').innerHTML = '';
+    $('summary-grid').innerHTML = '';
+    $('log-list').innerHTML = '';
+    showMessage('新批次已开始；请先扫描并预览，再开始还原。');
+    syncControls();
+    window.scrollTo({top:0, behavior:'smooth'});
   });
   $('cancel-button').addEventListener('click', async () => {
-    $('cancel-button').disabled = true;
+    if (!processing || cancelPending) return;
+    cancelPending = true;
+    syncControls();
     try { await api('/api/cancel', {method:'POST', body:'{}'}); toast('已发送取消请求，正在安全停止当前文件…'); }
     catch (error) { toast(error.message); }
+    finally { cancelPending = false; syncControls(); }
   });
   $('open-output-button').addEventListener('click', async () => {
     try { await api('/api/open-output', {method:'POST', body:'{}'}); toast('已打开结果文件夹。'); }
@@ -344,8 +546,11 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   const closeApplication = async () => {
-    $('close-button').disabled = true;
-    $('header-close-button').disabled = true;
+    if (shuttingDown) return;
+    shuttingDown = true;
+    activeOperation = 'shutdown';
+    showMessage('正在关闭应用…');
+    syncControls();
     try { await api('/api/shutdown', {method:'POST', body:'{}'}); }
     catch (_) { /* Server may close the connection immediately after accepting shutdown. */ }
     try { sessionStorage.removeItem('dji-lut-access'); } catch (_) { /* No persistent data to clear. */ }
@@ -357,13 +562,15 @@
   $('header-close-button').addEventListener('click', closeApplication);
 
   (async () => {
+    syncControls();
+    updateOutputDestination();
     if (!token) {
       $('connection').classList.add('disconnected');
       $('connection').innerHTML = '<i></i> 缺少访问凭据';
       $('footer-status').textContent = '请从应用自动打开的页面启动';
       showMessage('缺少本机访问凭据。请关闭本页并重新启动应用。');
-      previewButton.disabled = true;
-      runButton.disabled = true;
+      activeOperation = '';
+      syncControls();
       $('header-close-button').disabled = true;
       return;
     }
@@ -377,12 +584,15 @@
       if (choice) choice.checked = true;
       $('recursive').checked = Boolean(val(defaults,'recursive','Recursive'));
       listCatalog(val(boot,'catalog','Catalog') || []);
+      updateOutputDestination();
       $('footer-status').textContent = '本机服务已就绪';
-      await refreshState();
+      await refreshState({recover:true});
     } catch (error) {
-      $('footer-status').textContent = '本机服务连接失败';
+      if (connected) $('footer-status').textContent = '本机服务已连接，但初始化失败';
       showMessage(error.message);
       toast(error.message);
+    } finally {
+      endOperation('bootstrap');
     }
   })();
 })();

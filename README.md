@@ -14,9 +14,11 @@ Put the platform package beside the source videos and launch it:
 
 The package includes FFmpeg, FFprobe, the Chinese interface, and the LUT files selected when that release was built. It needs no Go, Python, FFmpeg installation, or network access at runtime. macOS apps are ad-hoc signed and are not notarized; Windows executables are unsigned.
 
-The app scans the selected folder and, optionally, its subfolders. It reads DJI `com.dji.camera.ColorGammaSxS` metadata and matches camera, profile, and look to the catalog. Normal/Rec.709 and HDR footage is copied unchanged. Unknown, unsupported, or conflicting metadata is copied unchanged and marked for review. An unavailable look does not fall back to another LUT. Source videos are never overwritten; an unverified existing output is reported as a conflict.
+The Chinese interface lets users paste a local source path or choose a folder with the system picker. The output base can also be chosen; leaving it blank saves beside the source folder under `Output`, and the page shows the final `Standard` or `Vivid` destination. Scanning is non-recursive by default. The app reads DJI `com.dji.camera.ColorGammaSxS` metadata and matches camera, profile, and look to the catalog. Normal/Rec.709 and HDR footage is copied unchanged. Unknown, unsupported, or conflicting metadata is copied unchanged and marked for review. An unavailable look does not fall back to another LUT. Source videos are never overwritten; an unverified existing output is reported as a conflict.
 
-Outputs are written under `Output/Standard/` or `Output/Vivid/`. Converted video is re-encoded as 10-bit HEVC Rec.709, so the video pixels are not lossless; audio streams are copied. Unmodified footage is copied byte-for-byte. See [LUT source notes](assets/SOURCES.md) for the registered camera/profile/look combinations and provenance.
+Each batch requires a fresh scan before processing. An empty scan cannot be started, and changing a setting invalidates its preview. After processing, users can open the output folder, export the report, or clear the old progress and start a new batch.
+
+When the output base is blank, outputs are written under `Output/Standard/` or `Output/Vivid/`; a selected base directory receives the corresponding style subfolder. Converted video is re-encoded as 10-bit HEVC Rec.709, so the video pixels are not lossless; audio streams are copied. Unmodified footage is copied byte-for-byte. See [Chinese usage instructions](docs/USAGE.zh-CN.md) and [LUT source notes](assets/SOURCES.md) for user workflow and the registered camera/profile/look combinations.
 
 ## Build from a source checkout
 

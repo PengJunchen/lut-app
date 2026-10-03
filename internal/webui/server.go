@@ -24,9 +24,11 @@ type Backend interface {
 	Bootstrap() any
 	Preview(context.Context, json.RawMessage) (any, error)
 	Start(context.Context, json.RawMessage) (any, error)
+	SelectFolder(context.Context, json.RawMessage) (any, error)
 	State() any
 	Cancel()
 	Wait()
+	Close()
 	OpenOutput() error
 }
 
@@ -141,6 +143,19 @@ func (s *Server) handler() http.Handler {
 		}
 		writeJSON(w, http.StatusAccepted, result)
 	}))
+	mux.HandleFunc("/api/select-folder", s.api(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		payload, err := readPayload(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		result, err := s.backend.SelectFolder(r.Context(), payload)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}))
 	mux.HandleFunc("/api/cancel", s.api(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 		s.backend.Cancel()
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -153,8 +168,7 @@ func (s *Server) handler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 	mux.HandleFunc("/api/shutdown", s.api(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
-		s.backend.Cancel()
-		s.backend.Wait()
+		s.backend.Close()
 		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

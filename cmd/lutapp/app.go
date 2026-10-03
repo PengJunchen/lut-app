@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"dji-lut-app/internal/engine"
+	"dji-lut-app/internal/folderpicker"
 )
 
 type frontendRequest struct {
@@ -20,6 +21,16 @@ type frontendRequest struct {
 	Output    string      `json:"output"`
 	Look      engine.Look `json:"look"`
 	Recursive bool        `json:"recursive"`
+}
+
+type folderPickerRequest struct {
+	Target string `json:"target"`
+	Path   string `json:"path"`
+}
+
+type folderPickerResult struct {
+	Path      string `json:"path"`
+	Cancelled bool   `json:"cancelled"`
 }
 
 type stateItem struct {
@@ -54,7 +65,14 @@ type application struct {
 	defaultOutput    string
 	defaultLook      engine.Look
 	defaultRecursive bool
+	closing          bool
 	previewing       bool
+	previewCancel    context.CancelFunc
+	previewDone      chan struct{}
+	pickingFolder    bool
+	folderPicker     folderpicker.Picker
+	pickerCancel     context.CancelFunc
+	pickerDone       chan struct{}
 	currentPlan      *engine.Plan
 	planConfig       engine.Config
 	state            appState
@@ -77,6 +95,7 @@ func newApplication(base engine.Config, catalog []engine.LUTSpec, defaultInput s
 		defaultOutput:    defaultOutput,
 		defaultLook:      defaultLook,
 		defaultRecursive: base.Recursive,
+		folderPicker:     folderpicker.New(),
 		state:            appState{Items: []stateItem{}, Logs: []string{}},
 	}
 }
@@ -105,23 +124,43 @@ func (a *application) Preview(ctx context.Context, raw json.RawMessage) (any, er
 		return nil, err
 	}
 	a.mu.Lock()
-	if a.state.Running || a.previewing {
+	if a.closing {
 		a.mu.Unlock()
+		return nil, errors.New("应用正在关闭")
+	}
+	if a.state.Running || a.previewing || a.pickingFolder {
+		pickingFolder := a.pickingFolder
+		a.mu.Unlock()
+		if pickingFolder {
+			return nil, errors.New("正在选择文件夹，请稍后再扫描")
+		}
 		return nil, errors.New("已有扫描或批次正在处理")
 	}
 	a.previewing = true
+	scanCtx, cancelScan := context.WithCancel(ctx)
+	scanDone := make(chan struct{})
+	a.previewCancel = cancelScan
+	a.previewDone = scanDone
 	a.currentPlan = nil
 	a.mu.Unlock()
-	plan, err := engine.Scan(ctx, cfg)
-	if err != nil {
-		a.mu.Lock()
+	plan, err := engine.Scan(scanCtx, cfg)
+	cancelScan()
+	a.mu.Lock()
+	if a.previewDone == scanDone {
 		a.previewing = false
+		a.previewCancel = nil
+		a.previewDone = nil
+		close(scanDone)
+	}
+	if a.closing {
+		a.mu.Unlock()
+		return nil, errors.New("应用正在关闭")
+	}
+	if err != nil {
 		a.mu.Unlock()
 		return nil, err
 	}
-	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.previewing = false
 	if a.state.Running {
 		return nil, errors.New("扫描期间另一个批次已经开始")
 	}
@@ -150,9 +189,17 @@ func (a *application) Start(ctx context.Context, raw json.RawMessage) (any, erro
 		return nil, err
 	}
 	a.mu.Lock()
+	if a.closing {
+		a.mu.Unlock()
+		return nil, errors.New("应用正在关闭")
+	}
 	if a.state.Running {
 		a.mu.Unlock()
 		return nil, errors.New("当前批次正在处理")
+	}
+	if a.pickingFolder {
+		a.mu.Unlock()
+		return nil, errors.New("正在选择文件夹，请稍后再开始")
 	}
 	if a.previewing {
 		a.mu.Unlock()
@@ -313,24 +360,150 @@ func (a *application) State() any {
 
 func (a *application) Cancel() {
 	a.mu.Lock()
-	cancel := a.cancel
+	cancelRun := a.cancel
+	cancelPicker := a.pickerCancel
 	a.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if cancelRun != nil {
+		cancelRun()
+	}
+	if cancelPicker != nil {
+		cancelPicker()
 	}
 }
 
-// Wait blocks until the active engine run has returned and its subprocesses
-// have been reaped. It is used when the server closes or the app is interrupted.
+// Wait blocks until the currently active run, scan, and picker have completed
+// without cancelling them.
 func (a *application) Wait() {
 	a.mu.Lock()
-	if !a.state.Running || a.runDone == nil {
-		a.mu.Unlock()
-		return
+	var done []<-chan struct{}
+	if a.state.Running && a.runDone != nil {
+		done = append(done, a.runDone)
 	}
-	done := a.runDone
+	if a.pickingFolder && a.pickerDone != nil {
+		done = append(done, a.pickerDone)
+	}
+	if a.previewing && a.previewDone != nil {
+		done = append(done, a.previewDone)
+	}
 	a.mu.Unlock()
-	<-done
+	for _, channel := range done {
+		<-channel
+	}
+}
+
+// Close prevents new work, cancels active subprocesses, and waits for the run,
+// scan, and native picker to exit. The closing flag and active-operation
+// snapshot share one lock so no operation can slip between cancellation and waiting.
+func (a *application) Close() {
+	a.mu.Lock()
+	a.closing = true
+	cancelRun := a.cancel
+	cancelPreview := a.previewCancel
+	cancelPicker := a.pickerCancel
+	var done []<-chan struct{}
+	if a.state.Running && a.runDone != nil {
+		done = append(done, a.runDone)
+	}
+	if a.pickingFolder && a.pickerDone != nil {
+		done = append(done, a.pickerDone)
+	}
+	if a.previewing && a.previewDone != nil {
+		done = append(done, a.previewDone)
+	}
+	a.mu.Unlock()
+	if cancelPreview != nil {
+		cancelPreview()
+	}
+	if cancelRun != nil {
+		cancelRun()
+	}
+	if cancelPicker != nil {
+		cancelPicker()
+	}
+	for _, channel := range done {
+		<-channel
+	}
+}
+
+func (a *application) SelectFolder(ctx context.Context, raw json.RawMessage) (any, error) {
+	var request folderPickerRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return nil, fmt.Errorf("读取文件夹选择请求失败：%w", err)
+	}
+	if request.Target != "input" && request.Target != "output" {
+		return nil, errors.New("文件夹选择目标必须是 input 或 output")
+	}
+
+	a.mu.Lock()
+	if a.closing {
+		a.mu.Unlock()
+		return nil, errors.New("应用正在关闭")
+	}
+	if a.state.Running {
+		a.mu.Unlock()
+		return nil, errors.New("批次处理期间不能选择文件夹")
+	}
+	if a.previewing {
+		a.mu.Unlock()
+		return nil, errors.New("扫描期间不能选择文件夹")
+	}
+	if a.pickingFolder {
+		a.mu.Unlock()
+		return nil, errors.New("已有文件夹选择窗口打开")
+	}
+	initialPath := request.Path
+	if initialPath == "" {
+		initialPath = a.defaultInput
+	}
+	initialPath, err := folderpicker.ResolveStartDirectory(initialPath)
+	if err != nil {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("没有可用的起始文件夹：%w", err)
+	}
+	picker := a.folderPicker
+	if picker == nil {
+		picker = folderpicker.New()
+	}
+	pickerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	a.pickingFolder = true
+	a.pickerCancel = cancel
+	a.pickerDone = done
+	a.mu.Unlock()
+	defer func() {
+		cancel()
+		a.mu.Lock()
+		if a.pickerDone == done {
+			a.pickingFolder = false
+			a.pickerCancel = nil
+			a.pickerDone = nil
+			close(done)
+		}
+		a.mu.Unlock()
+	}()
+
+	selected, cancelled, err := picker.Select(pickerCtx, initialPath)
+	if cancelled || errors.Is(err, context.Canceled) || errors.Is(pickerCtx.Err(), context.Canceled) {
+		return folderPickerResult{Path: request.Path, Cancelled: true}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("文件夹选择失败：%w", err)
+	}
+	if selected == "" {
+		return nil, errors.New("没有返回所选文件夹")
+	}
+	absolute, err := filepath.Abs(filepath.Clean(selected))
+	if err != nil {
+		return nil, fmt.Errorf("解析所选文件夹失败：%w", err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return nil, fmt.Errorf("所选文件夹不可用：%w", err)
+	}
+	if !info.IsDir() {
+		return nil, errors.New("所选路径不是文件夹")
+	}
+	return folderPickerResult{Path: absolute}, nil
 }
 
 func (a *application) OpenOutput() error {

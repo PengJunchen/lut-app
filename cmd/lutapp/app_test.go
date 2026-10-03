@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"dji-lut-app/internal/engine"
@@ -98,6 +101,170 @@ func TestBootstrapKeepsDefaultOutputRelativeToChosenInput(t *testing.T) {
 	if defaults["look"] != engine.LookVivid || defaults["recursive"] != true {
 		t.Fatalf("bootstrap did not preserve CLI look/recursive: %#v", defaults)
 	}
+}
+
+func TestSelectFolderCancellationPreservesPathAndApplicationState(t *testing.T) {
+	input := t.TempDir()
+	app := newApplication(engine.Config{}, nil, input)
+	app.state = appState{
+		InputRoot:  input,
+		OutputRoot: filepath.Join(input, "Output"),
+		Logs:       []string{"before picker"},
+		Items:      []stateItem{{ItemReport: engine.ItemReport{Input: "clip.mp4", Status: engine.StatusPlannedEncode}}},
+	}
+	before := cloneState(app.state)
+	picker := &testFolderPicker{cancelled: true}
+	app.folderPicker = picker
+
+	value, err := app.SelectFolder(t.Context(), folderPickerRequestJSON(t, "output", input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := value.(folderPickerResult)
+	if !result.Cancelled || result.Path != input {
+		t.Fatalf("cancel result = %#v, want original path and cancelled=true", result)
+	}
+	if !reflect.DeepEqual(before, app.State()) {
+		t.Fatalf("application state changed after picker cancellation: before=%#v after=%#v", before, app.State())
+	}
+	if picker.initial != input {
+		t.Fatalf("picker initial directory = %q, want %q", picker.initial, input)
+	}
+}
+
+func TestSelectFolderValidatesTargetAndSelectedDirectory(t *testing.T) {
+	input := t.TempDir()
+	selected := filepath.Join(t.TempDir(), "选中的目录 ")
+	if err := os.Mkdir(selected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	picker := &testFolderPicker{path: selected}
+	app := newApplication(engine.Config{}, nil, input)
+	app.folderPicker = picker
+
+	if _, err := app.SelectFolder(t.Context(), folderPickerRequestJSON(t, "sideways", input)); err == nil {
+		t.Fatal("invalid target was accepted")
+	}
+	if picker.calls != 0 {
+		t.Fatalf("picker calls after invalid target = %d, want 0", picker.calls)
+	}
+
+	value, err := app.SelectFolder(t.Context(), folderPickerRequestJSON(t, "input", input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := value.(folderPickerResult)
+	if result.Cancelled || result.Path != selected {
+		t.Fatalf("successful selection = %#v, want %q", result, selected)
+	}
+
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	picker.path = file
+	if _, err := app.SelectFolder(t.Context(), folderPickerRequestJSON(t, "output", input)); err == nil {
+		t.Fatal("selected file path was accepted as a folder")
+	}
+}
+
+func TestSelectFolderUsesExistingParentForMissingStartingPath(t *testing.T) {
+	input := t.TempDir()
+	missing := filepath.Join(input, "gone", "nested")
+	picker := &testFolderPicker{cancelled: true}
+	app := newApplication(engine.Config{}, nil, input)
+	app.folderPicker = picker
+
+	if _, err := app.SelectFolder(t.Context(), folderPickerRequestJSON(t, "input", missing)); err != nil {
+		t.Fatal(err)
+	}
+	if picker.initial != input {
+		t.Fatalf("fallback starting directory = %q, want existing parent %q", picker.initial, input)
+	}
+}
+
+func TestSelectFolderRejectsRunningScanAndAnotherPicker(t *testing.T) {
+	input := t.TempDir()
+	request := folderPickerRequestJSON(t, "input", input)
+	for _, test := range []struct {
+		name  string
+		state appState
+		scan  bool
+	}{
+		{name: "running", state: appState{Running: true}},
+		{name: "scanning", scan: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			picker := &testFolderPicker{}
+			app := newApplication(engine.Config{}, nil, input)
+			app.folderPicker = picker
+			app.state = test.state
+			app.previewing = test.scan
+			if _, err := app.SelectFolder(t.Context(), request); err == nil {
+				t.Fatal("folder selection was accepted while scan/run was active")
+			}
+			if picker.calls != 0 {
+				t.Fatalf("picker calls = %d, want 0", picker.calls)
+			}
+		})
+	}
+
+	started := make(chan struct{})
+	picker := &testFolderPicker{selectFunc: func(ctx context.Context, _ string) (string, bool, error) {
+		close(started)
+		<-ctx.Done()
+		return "", false, ctx.Err()
+	}}
+	app := newApplication(engine.Config{}, nil, input)
+	app.folderPicker = picker
+	first := make(chan error, 1)
+	go func() {
+		_, err := app.SelectFolder(context.Background(), request)
+		first <- err
+	}()
+	<-started
+	if _, err := app.SelectFolder(t.Context(), request); err == nil {
+		t.Fatal("concurrent folder selection was accepted")
+	}
+	app.Close()
+	if err := <-first; err != nil {
+		t.Fatalf("cancelled picker returned an error: %v", err)
+	}
+	if _, err := app.SelectFolder(t.Context(), request); err == nil {
+		t.Fatal("folder selection was accepted after Close")
+	}
+}
+
+type testFolderPicker struct {
+	mu         sync.Mutex
+	calls      int
+	initial    string
+	path       string
+	cancelled  bool
+	err        error
+	selectFunc func(context.Context, string) (string, bool, error)
+}
+
+func (p *testFolderPicker) Select(ctx context.Context, initial string) (string, bool, error) {
+	p.mu.Lock()
+	p.calls++
+	p.initial = initial
+	selectFunc := p.selectFunc
+	path, cancelled, err := p.path, p.cancelled, p.err
+	p.mu.Unlock()
+	if selectFunc != nil {
+		return selectFunc(ctx, initial)
+	}
+	return path, cancelled, err
+}
+
+func folderPickerRequestJSON(t *testing.T, target, path string) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(folderPickerRequest{Target: target, Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func quoteJSON(t *testing.T, value string) string {

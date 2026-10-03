@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-type testBackend struct{ previews int }
+type testBackend struct {
+	previews    int
+	folderPicks int
+}
 
 func (b *testBackend) Bootstrap() any { return map[string]any{"ready": true} }
 func (b *testBackend) Preview(_ context.Context, raw json.RawMessage) (any, error) {
@@ -21,9 +24,18 @@ func (b *testBackend) Preview(_ context.Context, raw json.RawMessage) (any, erro
 func (b *testBackend) Start(context.Context, json.RawMessage) (any, error) {
 	return map[string]any{"running": true}, nil
 }
+func (b *testBackend) SelectFolder(_ context.Context, raw json.RawMessage) (any, error) {
+	b.folderPicks++
+	var request struct {
+		Target string `json:"target"`
+	}
+	_ = json.Unmarshal(raw, &request)
+	return map[string]any{"path": "/selected", "cancelled": false, "target": request.Target}, nil
+}
 func (*testBackend) State() any        { return map[string]any{"running": false} }
 func (*testBackend) Cancel()           {}
 func (*testBackend) Wait()             {}
+func (*testBackend) Close()            {}
 func (*testBackend) OpenOutput() error { return nil }
 
 func TestLocalUIRequiresTokenAndSameOriginForCommands(t *testing.T) {
@@ -80,6 +92,18 @@ func TestLocalUIRequiresTokenAndSameOriginForCommands(t *testing.T) {
 		t.Fatalf("unauthorized bootstrap status = %d, want 401", unauthorized.StatusCode)
 	}
 
+	unauthorizedPick, _ := http.NewRequest(http.MethodPost, origin+"/api/select-folder", strings.NewReader(`{"target":"input","path":"/tmp"}`))
+	unauthorizedPick.Header.Set("Content-Type", "application/json")
+	unauthorizedPick.Header.Set("Origin", origin)
+	deniedPick, err := client.Do(unauthorizedPick)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = deniedPick.Body.Close()
+	if deniedPick.StatusCode != http.StatusUnauthorized || backend.folderPicks != 0 {
+		t.Fatalf("unauthorized picker status/count = %d/%d, want 401/0", deniedPick.StatusCode, backend.folderPicks)
+	}
+
 	request, _ := http.NewRequest(http.MethodGet, origin+"/api/bootstrap", nil)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Origin", origin)
@@ -90,6 +114,21 @@ func TestLocalUIRequiresTokenAndSameOriginForCommands(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("authorized bootstrap status = %d, want 200", response.StatusCode)
+	}
+
+	pickRequest, _ := http.NewRequest(http.MethodPost, origin+"/api/select-folder", strings.NewReader(`{"target":"output","path":"/tmp"}`))
+	pickRequest.Header.Set("Authorization", "Bearer "+token)
+	pickRequest.Header.Set("Content-Type", "application/json")
+	pickRequest.Header.Set("Origin", origin)
+	pickRequest.Header.Set("Sec-Fetch-Site", "same-origin")
+	pickResponse, err := client.Do(pickRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pickBody, _ := io.ReadAll(pickResponse.Body)
+	_ = pickResponse.Body.Close()
+	if pickResponse.StatusCode != http.StatusOK || backend.folderPicks != 1 || !strings.Contains(string(pickBody), `"cancelled":false`) {
+		t.Fatalf("authorized picker status/count/body = %d/%d/%s", pickResponse.StatusCode, backend.folderPicks, pickBody)
 	}
 
 	body := strings.NewReader(`{"input":"/tmp/videos","look":"standard"}`)
