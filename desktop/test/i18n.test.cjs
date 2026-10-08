@@ -20,8 +20,37 @@ test('locale dictionaries stay in parity and English contains no untranslated Ch
   }
 });
 
-test('every literal renderer translation key exists in both locales', () => {
-  const keys = [...new Set([...appSource.matchAll(/\bt\(\s*'([^']+)'/g)].map((match) => match[1]))];
+test('every renderer translation key, including conditional branches and mapped keys, exists in both locales', () => {
+  const keys = new Set();
+  const fixedMapStart = appSource.indexOf('const fixed = new Map([');
+  const fixedMapEnd = appSource.indexOf('\n    ]);', fixedMapStart);
+  assert.notEqual(fixedMapStart, -1, 'dynamic fixed-message translation map should be present');
+  assert.notEqual(fixedMapEnd, -1, 'dynamic fixed-message translation map should be closed');
+  const fixedMap = appSource.slice(fixedMapStart, fixedMapEnd);
+  const knownDynamicExpressions = new Set(['exactKey', 'lastMessageTranslationKey']);
+
+  for (const match of appSource.matchAll(/\bt\(\s*([^)]*)\)/g)) {
+    if (appSource[match.index - 1] === '.') continue; // i18n.t is the translation helper, not a renderer call.
+    const expression = match[1].trim();
+    const literals = [...expression.matchAll(/['"]([A-Za-z][A-Za-z0-9_-]*\.[A-Za-z0-9_.-]+)['"]/g)].map((entry) => entry[1]);
+    for (const key of literals) keys.add(key);
+    if (/^['"][^'"]+['"](?:\s*,|$)/.test(expression)) continue;
+
+    if (knownDynamicExpressions.has(expression)) {
+      if (expression === 'lastMessageTranslationKey') {
+        assert.match(appSource, /Object\.entries\(i18nApi\.messages\[i18n\.language\]\)/, 'saved UI messages must resolve only to a key from the current locale dictionary');
+      } else {
+        const mappedKeys = [...fixedMap.matchAll(/,\s*['"]([A-Za-z][A-Za-z0-9_-]*\.[A-Za-z0-9_.-]+)['"]/g)].map((entry) => entry[1]);
+        assert.ok(mappedKeys.length > 0, 'dynamic exactKey source must expose mapped translation keys');
+        for (const key of mappedKeys) keys.add(key);
+      }
+      continue;
+    }
+
+    assert.match(expression, /\?/, `unreviewed dynamic translation expression: ${expression}`);
+    assert.ok(literals.length > 0, `conditional translation expression has no literal keys: ${expression}`);
+  }
+
   for (const language of ['zh-CN', 'en']) {
     for (const key of keys) assert.ok(i18n.messages[language][key], `${language} is missing ${key}`);
     for (const key of Object.values(i18n.staticTextKeys)) assert.ok(i18n.messages[language][key], `${language} is missing static text ${key}`);

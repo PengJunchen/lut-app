@@ -41,6 +41,7 @@
   let pollTimer = null;
   let toastTimer = null;
   let lastMessage = '';
+  let lastMessageTranslationKey = '';
   let lastToastMessage = '';
   let libraryAssets = [];
   let libraryCatalog = [];
@@ -166,6 +167,9 @@
   };
   const showMessage = (message = '') => {
     lastMessage = message;
+    lastMessageTranslationKey = message
+      ? Object.entries(i18nApi.messages[i18n.language]).find(([, translated]) => translated === message)?.[0] || ''
+      : '';
     $('settings-message').textContent = message;
   };
   function localizedError(error) {
@@ -200,6 +204,7 @@
       elementScroll: [...document.querySelectorAll('*')].map((element) => [element, element.scrollTop, element.scrollLeft])
     };
     i18n.apply(document);
+    setConnection(connected);
     document.title = t('app.title');
     $('language-select').value = i18n.language;
     $('language-select').disabled = isDesktop && !desktopPreferenceReady;
@@ -212,7 +217,7 @@
     else if (connected) $('footer-status').textContent = t(isDesktop ? 'connection.desktopReady' : 'state.localReady');
     if (currentDetail && $('file-detail-dialog').open) renderItemDetails(currentDetail.item, currentDetail.preview);
     if (lastMessage) {
-      const translated = i18n.translateKnownMessage(lastMessage);
+      const translated = lastMessageTranslationKey ? t(lastMessageTranslationKey) : i18n.translateKnownMessage(lastMessage);
       if (translated) showMessage(translated);
     }
     const toastNode = $('toast');
