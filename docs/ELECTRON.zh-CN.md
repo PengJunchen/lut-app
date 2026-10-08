@@ -60,6 +60,8 @@ npm run build:desktop -- darwin-arm64
 
 不传目标时，`npm run build:desktop` 会构建本机架构；也可以在一次命令中传入多个目标。可选目标和输出文件如下：
 
+目标与构建机器的平台和架构相同时，脚本检查已安装 Electron 的版本和可执行文件，再复用 `node_modules/electron/dist` 打包，减少重复下载。交叉构建由打包器取得目标平台的运行时。该目录参数采用 [electron-builder v26 的 electronDist 配置](https://www.electron.build/v26/docs/api/app-builder-lib.interface.configuration/)；首次依赖、运行时与构建工具准备仍可能需要网络。
+
 | 目标 | 最低系统版本 | 输出文件 |
 | --- | --- | --- |
 | `darwin-arm64` | macOS 13 | `dist/electron/DJI-LUT-macOS-AppleSilicon.zip` |
@@ -73,6 +75,8 @@ npm run build:desktop -- darwin-arm64
 ## GitHub 自动构建与发布
 
 PR 和 `main` 推送会运行源码检查及 macOS Apple Silicon、macOS Intel、Windows x64 本机构建校验。发布 tag 触发相同检查，三份包均通过后才创建 GitHub Release，并附带 `SHA256SUMS` 与 `BUILD-METADATA.json`。版本字段与 tag 必须一致；规则和维护步骤见[版本与发布说明](RELEASING.zh-CN.md)。每份包还附带 `DISTRIBUTION_NOTICES.md`，记录第三方来源与许可边界。
+
+非 tag 构建通过验证后，Actions 会保留三份 `preview-<target>` 预览归档 7 天，每份包含桌面 ZIP 和构建摘要。预览归档可用于核查具体提交，正式 RC 下载仍以 Release 页面为准。
 
 ## 构建依赖说明
 
