@@ -1,6 +1,6 @@
 {
   "name": "dji-lut-desktop",
-  "version": "2.3.0",
+  "version": "0.0.1-rc.0",
   "private": true,
   "description": "A local Electron desktop shell for DJI LUT video restoration",
   "main": "desktop/main.cjs",

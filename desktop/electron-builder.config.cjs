@@ -43,6 +43,7 @@ module.exports = {
     { from: "LICENSE", to: "LICENSE" },
     { from: "THIRD_PARTY.md", to: "THIRD_PARTY.md" },
     { from: "docs/ELECTRON.zh-CN.md", to: "USAGE.zh-CN.md" },
+    { from: "docs/DISTRIBUTION_NOTICES.md", to: "DISTRIBUTION_NOTICES.md" },
     { from: "assets/SOURCES.md", to: "assets/SOURCES.md" },
     { from: "assets/catalog.json", to: "assets/catalog.json" },
     { from: "assets/library.json", to: "assets/library.json" },
