@@ -25,7 +25,7 @@ An offline tool for exploring DJI's official LUT catalog and restoring supported
 
 ## 下载与发布
 
-首个公开 RC 的应用版本为 `0.0.1-rc.0`，Git tag 和 GitHub Release 名称为 **`rc0.0.1`**。可从 [rc0.0.1 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) 下载：
+首个公开 RC 的应用版本为 `0.0.1-rc.0`，Git tag 为 **`rc0.0.1`**，GitHub Release 显示标题为 `DJI LUT 0.0.1-rc.0`。可从 [rc0.0.1 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) 下载：
 
 | 平台 | 下载 |
 | --- | --- |

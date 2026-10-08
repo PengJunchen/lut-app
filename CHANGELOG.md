@@ -4,7 +4,7 @@
 
 ## [0.0.1-rc.0] — 2026-10-08 — 首个公开候选版本
 
-Git tag / GitHub Release 名称：`rc0.0.1`。
+Git tag：`rc0.0.1`。GitHub Release 显示标题：`DJI LUT 0.0.1-rc.0`。
 
 ### 新增
 
