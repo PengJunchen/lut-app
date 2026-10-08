@@ -41,6 +41,8 @@ DJI LUT 是一款离线运行的视频色彩还原工具。它读取 DJI 视频�
 
 发行目标为 macOS 13 或更新版本（Apple Silicon 与 Intel）以及 Windows 10 x64。PR 和 `main` 的自动检查在三个目标平台运行原生构建验证；推送 `rc*` 或 `v*` tag 会构建三种发行包并附加到 GitHub Release。维护者须先在合入 `main` 的提交中同步应用版本字段，再创建 tag；发布工作流按 tag 校验源码版本，不临时改写版本文件。构建状态见 [GitHub Actions](https://github.com/PengJunchen/lut-app/actions)。完整步骤见[发布流程（中文）](docs/RELEASING.zh-CN.md)。
 
+PR 和 `main` 构建成功后，在对应 Actions 运行的 Artifacts 中下载 `preview-darwin-arm64`、`preview-darwin-amd64` 或 `preview-windows-amd64`，可试用该提交的界面改动。每个预览归档包含桌面 ZIP 与构建摘要，保留 7 天；下载可能需要登录 GitHub。预览构建不是正式发行版。
+
 桌面包包含 Electron 界面、Go 引擎、FFmpeg、FFprobe 和构建时锁定的 LUT 资源，日常运行无需另装这些工具，也不需要网络。macOS 包使用 ad-hoc 签名且未公证；Windows 包没有商业代码签名。发行包和本地构建中的第三方材料许可边界见[第三方材料说明](THIRD_PARTY.md)。
 
 ## 使用方式与处理特性

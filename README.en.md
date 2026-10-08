@@ -41,6 +41,8 @@ The current public RC has application version `0.0.1-rc.0`, Git tag **`rc0.0.1`*
 
 The release targets macOS 13 or later (Apple Silicon and Intel) and Windows 10 x64. Pull requests and `main` run native build checks on all three target platforms; pushing an `rc*` or `v*` tag builds the three release packages and attaches them to a GitHub Release. Maintainers must update the application version fields in a commit merged to `main` before creating a tag. The release workflow checks the source version against the tag; it does not rewrite version files. Build status is available in [GitHub Actions](https://github.com/PengJunchen/lut-app/actions). See the [release process (Chinese)](docs/RELEASING.zh-CN.md) for the full steps.
 
+After a successful PR or `main` build, download `preview-darwin-arm64`, `preview-darwin-amd64`, or `preview-windows-amd64` from that Actions run's Artifacts to try its interface changes. Each preview archive contains the desktop ZIP and build metadata and is retained for seven days. GitHub may require sign-in to download it. Preview builds are not formal releases.
+
 Desktop packages include the Electron interface, Go engine, FFmpeg, FFprobe, and LUT resources pinned at build time. They do not require separate installation of these tools or an internet connection for normal use. macOS packages are ad-hoc signed and not notarized; Windows packages have no commercial code signature. See [third-party materials](THIRD_PARTY.md) for licensing boundaries in release packages and local builds.
 
 ## Workflow and processing behavior
