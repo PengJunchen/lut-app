@@ -132,7 +132,7 @@ jobs:
         run: npm test
 
       - name: Prepare verified DJI LUT payloads
-        run: python packaging/prepare_luts.py
+        run: python packaging/bootstrap_luts_from_release.py --target "${{ matrix.target }}"
 
       - name: Prepare this target's hash-locked FFmpeg runtime
         run: python packaging/prepare_runtime.py "${{ matrix.target }}"

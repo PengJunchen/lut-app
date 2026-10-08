@@ -47,6 +47,8 @@ npm start
 
 把 `darwin-arm64` 替换为 `darwin-amd64` 或 `windows-amd64` 可准备对应平台的运行时。Apple Silicon Mac 上的开发启动应使用 `darwin-arm64`；Intel Mac 使用 `darwin-amd64`。LUT 文件仅需准备一次，脚本按完整 library 中的 SHA-256 校验直接文件或 ZIP 内的指定成员，全部成功后才替换本地 LUT 目录并清除旧版本。可选 --source-dir 导入匹配的已有文件；原目录不会被修改。
 
+官方 CDN 不可用时，可在对应的原生平台运行 `python3 packaging/bootstrap_luts_from_release.py --target darwin-arm64`。它取得固定 SHA-256 的 `rc0.0.1` 同平台桌面归档，仅提取原生 Go 引擎，在自行创建的空目录中执行无界面的扫描预览，使原有 LUT 数据解出至正常应用缓存；之后逐项核对当前清单的所有 LUT 哈希，再通过现有 `--source-dir` 导入流程准备资源。可选 `--archive <ZIP路径>` 使用预先下载的同一归档，仍须通过固定归档哈希。该过程不处理用户视频，最终应用中的引擎仍从当前源码编译；没有匹配的新资源时会停止。官方直连准备命令的默认行为不变。
+
 ## 构建发行包
 
 从源码构建发行包需要先安装锁定版本的 npm 依赖，并准备与目标平台匹配的运行时和 LUT 文件：
@@ -75,6 +77,8 @@ npm run build:desktop -- darwin-arm64
 ## GitHub 自动构建与发布
 
 PR 和 `main` 推送会运行源码检查及 macOS Apple Silicon、macOS Intel、Windows x64 本机构建校验。发布 tag 触发相同检查，三份包均通过后才创建 GitHub Release，并附带 `SHA256SUMS` 与 `BUILD-METADATA.json`。版本字段与 tag 必须一致；规则和维护步骤见[版本与发布说明](RELEASING.zh-CN.md)。每份包还附带 `DISTRIBUTION_NOTICES.md`，记录第三方来源与许可边界。
+
+原生 CI 使用上述归档导入流程准备已有 LUT，归档与每项 LUT 均须通过锁定哈希，后续仍执行当前引擎编译和完整包校验。当前归档导入流程固定支持 40 个数据文件；数量或哈希变化均会停止。更新 LUT 清单时，需同步维护资源准备方式；旧归档不能替代新资源的来源核查。
 
 非 tag 构建通过验证后，Actions 会保留三份 `preview-<target>` 预览归档 7 天，每份包含桌面 ZIP 和构建摘要。预览归档可用于核查具体提交，正式 RC 下载仍以 Release 页面为准。
 

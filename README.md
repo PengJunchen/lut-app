@@ -73,6 +73,8 @@ npm test
 
 完整运行时准备、LUT 校验和平台打包步骤见[Electron 构建说明（中文）](docs/ELECTRON.zh-CN.md)。模块与数据之间的关系见[技术架构（中文）](docs/ARCHITECTURE.zh-CN.md)；如何提报问题、扩展 LUT 清单和提交修改见[贡献指南（中文）](CONTRIBUTING.md)。
 
+原生 CI 从固定 SHA-256 的 `rc0.0.1` 同平台归档中准备当前 40 个 LUT 数据文件，再按当前清单逐项复核，以减少对官方 CDN 可用性的依赖。最终 Go 引擎仍从当前源码编译。维护者也可使用 `packaging/bootstrap_luts_from_release.py --target <target>`；若当前清单包含归档中没有的新文件或不同哈希，准备过程会失败，须先取得匹配的官方资源。
+
 ## 许可证与项目声明
 
 [`LICENSE`](LICENSE) 中的 MIT 许可适用于项目原创源码，不自动覆盖 DJI LUT、FFmpeg、Electron、Chromium 或发行包中的其他第三方材料。项目尚未确认 DJI LUT 文件的再分发授权；存在官方公开下载地址不等于取得再分发许可。请勿把项目的 MIT 许可当作 LUT 文件或包含 LUT 的发行包的授权依据，详情见[第三方材料说明](THIRD_PARTY.md)。

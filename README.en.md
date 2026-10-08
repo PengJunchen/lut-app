@@ -73,6 +73,8 @@ npm test
 
 For runtime preparation, LUT verification, and platform packaging, see the [Electron build guide (Chinese)](docs/ELECTRON.zh-CN.md). The [architecture guide (Chinese)](docs/ARCHITECTURE.zh-CN.md) describes the modules and data; the [contributing guide (Chinese)](CONTRIBUTING.md) explains issue reports, LUT catalog changes, and code contributions.
 
+Native CI prepares the current 40 LUT payloads from the SHA-256-pinned `rc0.0.1` archive for its target, then validates every payload against the current manifest to reduce dependence on the official CDN's availability. The final Go engine is still compiled from the current source. Maintainers can also run `packaging/bootstrap_luts_from_release.py --target <target>`; new or changed manifest payloads absent from that archive stop preparation and require matching official resources.
+
 ## License and project notice
 
 The MIT license in [`LICENSE`](LICENSE) applies to the project's original source code. It does not automatically cover DJI LUTs, FFmpeg, Electron, Chromium, or other third-party materials in release packages. The project has not confirmed permission to redistribute DJI LUT files; public DJI download links are not a redistribution grant. Do not treat the project's MIT license as authorization for the LUT files or packages containing them. See [third-party materials](THIRD_PARTY.md) for details.
