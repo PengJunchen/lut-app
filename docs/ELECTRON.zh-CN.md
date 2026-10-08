@@ -68,6 +68,10 @@ npm run build:desktop -- darwin-arm64
 
 只需启动 Electron 开发窗口时，可使用 `npm run build:engine -- <target>` 只构建 Go sidecar，无需运行 electron-builder。Windows 交叉构建在没有 Wine 的机器上会关闭 electron-builder 的 Windows 可执行文件签名与资源编辑步骤。交叉构建结果不等同于在目标操作系统上的实际运行验证。所有发行包和 sidecar 中间文件均写入被 Git 忽略的 `dist/electron/` 与 `desktop/.generated/`。
 
+## GitHub 自动构建与发布
+
+PR 和 `main` 推送会运行源码检查及 macOS Apple Silicon、macOS Intel、Windows x64 本机构建校验。发布 tag 触发相同检查，三份包均通过后才创建 GitHub Release，并附带 `SHA256SUMS` 与 `BUILD-METADATA.json`。版本字段与 tag 必须一致；规则和维护步骤见[版本与发布说明](RELEASING.zh-CN.md)。每份包还附带 `DISTRIBUTION_NOTICES.md`，记录第三方来源与许可边界。
+
 ## 构建依赖说明
 
 截至 2026-10-03，npm 报告 electron-builder 的构建期依赖链包含 [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp)。该依赖只用于构建，不随应用发行；应用本身没有配置共享 HTTP 缓存。当前没有可用的修复版本，因此保留锁定版本，不通过强制降级或覆盖依赖规避；更新构建依赖时应重新检查该公告。

@@ -54,3 +54,5 @@ LUT 清单的价值在于来源明确、匹配条件可复核。请仅使用可�
 ## 版本和发行
 
 公开首个 RC 的目标版本为 `0.0.1-rc.0`，tag 与 GitHub Release 名称为 `rc0.0.1`。维护者应先把 package/Go 等源码版本字段统一更新并合入 `main`，再创建 tag。发行工作流按 tag 检查当前提交中的版本，不会替提交修改版本文件。PR/`main` 检查和 `rc*`、`v*` 发布触发规则见仓库的 GitHub Actions 工作流。
+
+具体版本同步、tag 命名、发布操作和下载包验收见[版本与发布说明](docs/RELEASING.zh-CN.md)。

@@ -6,7 +6,7 @@ An offline tool for exploring DJI's official LUT catalog and restoring supported
 
 项目面向 **DJI 全系列官方 LUT** 建立目录并逐步扩展转换覆盖；当前版本只会自动处理 `assets/catalog.json` 中已有精确机型、Log 模式与风格映射的素材。这里的“面向全系列”不表示所有 DJI 相机都已支持自动识别或完成实机验证。
 
-[RC 下载页](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) · [使用说明](docs/USAGE.zh-CN.md) · [技术架构](docs/ARCHITECTURE.zh-CN.md) · [贡献指南](CONTRIBUTING.md)
+[RC 下载页](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) · [使用说明](docs/USAGE.zh-CN.md) · [技术架构](docs/ARCHITECTURE.zh-CN.md) · [贡献指南](CONTRIBUTING.md) · [发布流程](docs/RELEASING.zh-CN.md)
 
 ## 当前覆盖范围
 
@@ -25,7 +25,7 @@ An offline tool for exploring DJI's official LUT catalog and restoring supported
 
 ## 下载与发布
 
-首个公开 RC 目标版本为 `0.0.1-rc.0`，Git tag 和 GitHub Release 名称为 **`rc0.0.1`**。发布生成后，可从 [rc0.0.1 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) 下载：
+首个公开 RC 的应用版本为 `0.0.1-rc.0`，Git tag 和 GitHub Release 名称为 **`rc0.0.1`**。可从 [rc0.0.1 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) 下载：
 
 | 平台 | 下载 |
 | --- | --- |
