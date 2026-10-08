@@ -7,6 +7,8 @@ const TARGETS = {
   "windows-amd64": { platform: "win", arch: "x64", binary: "engine.exe", artifact: "DJI-LUT-Windows-x64.zip" },
 };
 
+const numericVersion = require("../package.json").version.split("-")[0];
+
 const target = process.env.DJI_LUT_TARGET;
 const spec = TARGETS[target];
 if (!spec) {
@@ -54,6 +56,8 @@ module.exports = {
   mac: spec.platform === "mac" ? {
     target: [{ target: "zip", arch: [spec.arch] }],
     minimumSystemVersion: "13.0",
+    bundleShortVersion: numericVersion,
+    bundleVersion: numericVersion,
     identity: "-",
     binaries: ["Contents/Resources/engine/engine"],
   } : undefined,

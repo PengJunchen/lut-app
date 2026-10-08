@@ -8,8 +8,11 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import plistlib
 import queue
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -222,6 +225,134 @@ def resource_member(names: list[str], suffix: str) -> str:
     return matches[0]
 
 
+def macos_app_info_plist_member(names: list[str]) -> str:
+    matches = []
+    for name in names:
+        parts = PurePosixPath(name.replace("\\", "/")).parts
+        if len(parts) == 3 and parts[0].lower().endswith(".app") and [part.lower() for part in parts[1:]] == [
+            "contents", "info.plist"
+        ]:
+            matches.append(name)
+    if len(matches) != 1:
+        raise RuntimeError("expected one top-level macOS application Info.plist in the Electron archive")
+    return matches[0]
+
+
+def _macho_signature_and_linkedit(data: bytes) -> tuple[bool, int]:
+    """Return whether a thin 64-bit Mach-O has a signature and its __LINKEDIT vmsize offset."""
+    if len(data) < 32:
+        raise RuntimeError("native Go sidecar is not a complete 64-bit Mach-O executable")
+    if data[:4] == b"\xcf\xfa\xed\xfe":
+        endian = "<"
+    elif data[:4] == b"\xfe\xed\xfa\xcf":
+        endian = ">"
+    else:
+        raise RuntimeError("native Go sidecar is not a supported 64-bit Mach-O executable")
+
+    ncmds = int.from_bytes(data[16:20], "little" if endian == "<" else "big")
+    sizeofcmds = int.from_bytes(data[20:24], "little" if endian == "<" else "big")
+    commands_end = 32 + sizeofcmds
+    if commands_end > len(data):
+        raise RuntimeError("native Go sidecar has an invalid Mach-O load-command table")
+
+    signature_records: list[tuple[int, int]] = []
+    linkedit_vmsize_offsets: list[int] = []
+    offset = 32
+    for _ in range(ncmds):
+        if offset + 8 > commands_end:
+            raise RuntimeError("native Go sidecar has a truncated Mach-O load command")
+        command = int.from_bytes(data[offset:offset + 4], "little" if endian == "<" else "big")
+        command_size = int.from_bytes(data[offset + 4:offset + 8], "little" if endian == "<" else "big")
+        if command_size < 8 or offset + command_size > commands_end:
+            raise RuntimeError("native Go sidecar has an invalid Mach-O load command")
+        if command == 0x1D:  # LC_CODE_SIGNATURE
+            if command_size < 16:
+                raise RuntimeError("native Go sidecar has an invalid code-signature command")
+            data_offset = int.from_bytes(data[offset + 8:offset + 12], "little" if endian == "<" else "big")
+            data_size = int.from_bytes(data[offset + 12:offset + 16], "little" if endian == "<" else "big")
+            if data_size and (data_offset > len(data) or data_size > len(data) - data_offset):
+                raise RuntimeError("native Go sidecar has an out-of-bounds code signature")
+            signature_records.append((data_offset, data_size))
+        elif command == 0x19:  # LC_SEGMENT_64
+            if command_size < 72:
+                raise RuntimeError("native Go sidecar has an invalid 64-bit segment command")
+            if data[offset + 8:offset + 24].split(b"\0", 1)[0] == b"__LINKEDIT":
+                linkedit_vmsize_offsets.append(offset + 32)
+        offset += command_size
+    if offset != commands_end or len(linkedit_vmsize_offsets) != 1 or len(signature_records) > 1:
+        raise RuntimeError("native Go sidecar has an unexpected Mach-O load-command layout")
+    return bool(signature_records and signature_records[0][1]), linkedit_vmsize_offsets[0]
+
+
+def _run_codesign(arguments: list[str]) -> None:
+    try:
+        result = subprocess.run(
+            ["codesign", *arguments],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        raise RuntimeError("macOS codesign is unavailable for native engine verification") from error
+    if result.returncode == 0:
+        return
+    raise RuntimeError("macOS native engine code-signature operation failed")
+
+
+def verify_macos_engine_signature(engine: Path) -> None:
+    signed, _ = _macho_signature_and_linkedit(engine.read_bytes())
+    if not signed:
+        raise RuntimeError("Electron archive native engine has no Mach-O code signature")
+    _run_codesign(["--verify", "--strict", str(engine)])
+
+
+def normalize_macos_engine_code(data: bytes) -> bytes:
+    """Zero only __LINKEDIT.vmsize, which ad-hoc signing can adjust after stripping."""
+    _, linkedit_vmsize = _macho_signature_and_linkedit(data)
+    normalized = bytearray(data)
+    normalized[linkedit_vmsize:linkedit_vmsize + 8] = b"\0" * 8
+    return bytes(normalized)
+
+
+def compare_macos_engine_code(archive_engine: Path, sidecar: Path) -> None:
+    """Compare code from temporary copies, normalizing only signature metadata."""
+    with tempfile.TemporaryDirectory(prefix="dji-lut-engine-compare-", dir=archive_engine.parent) as temporary:
+        compare_dir = Path(temporary)
+        archive_copy = compare_dir / "archive-engine"
+        sidecar_copy = compare_dir / "generated-engine"
+        shutil.copyfile(archive_engine, archive_copy)
+        shutil.copyfile(sidecar, sidecar_copy)
+
+        for copy in (archive_copy, sidecar_copy):
+            signed, _ = _macho_signature_and_linkedit(copy.read_bytes())
+            if signed:
+                _run_codesign(["--remove-signature", str(copy)])
+
+        archive_bytes = archive_copy.read_bytes()
+        sidecar_bytes = sidecar_copy.read_bytes()
+        archive_signed, _ = _macho_signature_and_linkedit(archive_bytes)
+        sidecar_signed, _ = _macho_signature_and_linkedit(sidecar_bytes)
+        if archive_signed or sidecar_signed:
+            raise RuntimeError("macOS native engine signature removal did not complete")
+
+        # Keep every other Mach-O byte, including all remaining load commands, exact.
+        if normalize_macos_engine_code(archive_bytes) != normalize_macos_engine_code(sidecar_bytes):
+            raise RuntimeError("Electron archive native engine code differs from the verified Go sidecar")
+
+
+def verify_macos_info_plist(plist_bytes: bytes, version: str) -> None:
+    try:
+        plist = plistlib.loads(plist_bytes)
+    except (plistlib.InvalidFileException, ValueError) as error:
+        raise RuntimeError("Electron archive Info.plist is invalid") from error
+    numeric_version = version.split("-", 1)[0]
+    if not isinstance(plist, dict) or any(
+        plist.get(key) != numeric_version
+        for key in ("CFBundleShortVersionString", "CFBundleVersion")
+    ):
+        raise RuntimeError("Electron archive Info.plist versions do not match the numeric package version")
+
+
 def verify_bundle_cache(
     cache_parent: Path,
     target: str,
@@ -342,6 +473,7 @@ def verify_bundle_root(
         actual = sha256((bundle_root / "bin" / f"{tool}{extension}").read_bytes())
         if actual != record["binary_sha256"]:
             raise RuntimeError(f"embedded {tool} checksum differs from packaging/runtime-lock.json")
+    verify_native_runtime_tools(bundle_root, target)
 
     ffmpeg_version = locked["tools"]["ffmpeg"]["version"].removesuffix("-tessus")
     expected_ffmpeg_license = license_lock["ffmpeg"][ffmpeg_version]["sha256"]
@@ -385,11 +517,31 @@ def locked_ffmpeg_license_files(licenses_dir: Path, expected_sha256: str) -> dic
     return result
 
 
+def verify_native_runtime_tools(bundle_root: Path, target: str) -> None:
+    extension = ".exe" if target.startswith("windows-") else ""
+    for name in ("ffmpeg", "ffprobe"):
+        executable = bundle_root / "bin" / f"{name}{extension}"
+        try:
+            result = subprocess.run(
+                [str(executable), "-version"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise RuntimeError(f"embedded {name} failed to start for {target}") from error
+        if result.returncode != 0:
+            raise RuntimeError(f"embedded {name} failed its native startup check for {target}")
+
+
 def verify_archive(
     archive_path: Path,
     target: str,
     sidecar: Path,
     source_files: dict[str, bytes],
+    extracted_engine: Path,
+    version: str,
 ) -> dict:
     spec = TARGETS[target]
     if archive_path.name != spec["artifact"]:
@@ -398,7 +550,6 @@ def verify_archive(
         raise RuntimeError(f"missing or empty Electron archive for {target}")
     if not zipfile.is_zipfile(archive_path):
         raise RuntimeError(f"Electron output for {target} is not a ZIP archive")
-    expected_sidecar = sha256(sidecar.read_bytes())
     required = [f"resources/engine/{spec['engine']}", *source_files]
     with zipfile.ZipFile(archive_path) as archive:
         bad = archive.testzip()
@@ -412,13 +563,34 @@ def verify_archive(
             actual = archive.read(members[suffix])
             if actual != expected_bytes:
                 raise RuntimeError(f"Electron archive resource differs from source: {suffix}")
-        archive_engine_hash = sha256(archive.read(members[f"resources/engine/{spec['engine']}"]))
-        if archive_engine_hash != expected_sidecar:
-            raise RuntimeError("Electron archive does not contain the verified native Go sidecar")
+        engine_member = members[f"resources/engine/{spec['engine']}"]
+        engine_info = archive.getinfo(engine_member)
+        if stat.S_ISLNK(engine_info.external_attr >> 16):
+            raise RuntimeError("Electron archive native engine must not be a symbolic link")
+        engine_bytes = archive.read(engine_member)
+        archive_engine_hash = sha256(engine_bytes)
+        if spec["host"] == "darwin":
+            plist_member = macos_app_info_plist_member(archive.namelist())
+            plist_bytes = archive.read(plist_member)
+            verify_macos_info_plist(plist_bytes, version)
+
+        extracted_engine.parent.mkdir(parents=True, exist_ok=True)
+        with extracted_engine.open("xb") as output:
+            output.write(engine_bytes)
+        if spec["host"] == "darwin":
+            extracted_engine.chmod(0o700)
+            verify_macos_engine_signature(extracted_engine)
+            compare_macos_engine_code(extracted_engine, sidecar)
+        else:
+            extracted_engine_hash = sha256(extracted_engine.read_bytes())
+            if extracted_engine_hash != sha256(sidecar.read_bytes()):
+                raise RuntimeError("Electron archive does not contain the verified native Go sidecar")
         resource_records = [
             {"path": suffix, "sha256": sha256(archive.read(members[suffix]))}
             for suffix in sorted(required)
         ]
+        if spec["host"] == "darwin":
+            resource_records.append({"path": plist_member, "sha256": sha256(plist_bytes)})
     return {
         "path": archive_path.name,
         "bytes": archive_path.stat().st_size,
@@ -461,14 +633,37 @@ def main() -> None:
     executable = ROOT / "desktop" / ".generated" / args.target / target_spec["engine"]
     if not executable.is_file():
         raise SystemExit(f"missing native sidecar for {args.target}")
-    input_dir = None
-    process = None
+    generated_licenses = ROOT / "desktop" / ".generated" / args.target / "licenses"
+    ffmpeg_version = runtime_lock["targets"][args.target]["tools"]["ffmpeg"]["version"].removesuffix("-tessus")
+    ffmpeg_license_sha256 = license_lock["ffmpeg"][ffmpeg_version]["sha256"]
+    source_files = {
+        "resources/LICENSE": (ROOT / "LICENSE").read_bytes(),
+        "resources/THIRD_PARTY.md": (ROOT / "THIRD_PARTY.md").read_bytes(),
+        "resources/USAGE.zh-CN.md": (ROOT / "docs" / "ELECTRON.zh-CN.md").read_bytes(),
+        "resources/DISTRIBUTION_NOTICES.md": (ROOT / "docs" / "DISTRIBUTION_NOTICES.md").read_bytes(),
+        "resources/assets/SOURCES.md": sources_source,
+        "resources/assets/catalog.json": catalog_source,
+        "resources/assets/library.json": library_source,
+        "resources/packaging/runtime-lock.json": runtime_lock_source,
+        "resources/packaging/license-lock.json": license_lock_source,
+        "resources/licenses/Go-LICENSE": (generated_licenses / "Go-LICENSE").read_bytes(),
+        "resources/licenses/Electron-LICENSE.txt": (generated_licenses / "Electron-LICENSE.txt").read_bytes(),
+        "resources/licenses/Chromium-LICENSES.html": (generated_licenses / "Chromium-LICENSES.html").read_bytes(),
+    }
+    if sha256(source_files["resources/licenses/Go-LICENSE"]) != license_lock["go"]["sha256"]:
+        raise RuntimeError("generated Go license does not match packaging/license-lock.json")
+    source_files.update(locked_ffmpeg_license_files(generated_licenses, ffmpeg_license_sha256))
+
     with tempfile.TemporaryDirectory(prefix="dji-lut-release-smoke-") as scratch:
         scratch_root = Path(scratch)
         input_dir = scratch_root / "input"
         input_dir.mkdir()
+        extracted_engine = scratch_root / "archive-engine" / target_spec["engine"]
+        archive = verify_archive(
+            args.archive.resolve(), args.target, executable, source_files, extracted_engine, args.version
+        )
         env, cache_parent = build_cache_environment()
-        ready, process = start_sidecar(executable, input_dir, env)
+        ready, process = start_sidecar(extracted_engine, input_dir, env)
         try:
             bootstrap = fetch_bootstrap(ready)
         finally:
@@ -494,27 +689,6 @@ def main() -> None:
             license_lock,
         )
 
-    generated_licenses = ROOT / "desktop" / ".generated" / args.target / "licenses"
-    ffmpeg_version = runtime_lock["targets"][args.target]["tools"]["ffmpeg"]["version"].removesuffix("-tessus")
-    ffmpeg_license_sha256 = license_lock["ffmpeg"][ffmpeg_version]["sha256"]
-    source_files = {
-        "resources/LICENSE": (ROOT / "LICENSE").read_bytes(),
-        "resources/THIRD_PARTY.md": (ROOT / "THIRD_PARTY.md").read_bytes(),
-        "resources/USAGE.zh-CN.md": (ROOT / "docs" / "ELECTRON.zh-CN.md").read_bytes(),
-        "resources/DISTRIBUTION_NOTICES.md": (ROOT / "docs" / "DISTRIBUTION_NOTICES.md").read_bytes(),
-        "resources/assets/SOURCES.md": sources_source,
-        "resources/assets/catalog.json": catalog_source,
-        "resources/assets/library.json": library_source,
-        "resources/packaging/runtime-lock.json": runtime_lock_source,
-        "resources/packaging/license-lock.json": license_lock_source,
-        "resources/licenses/Go-LICENSE": (generated_licenses / "Go-LICENSE").read_bytes(),
-        "resources/licenses/Electron-LICENSE.txt": (generated_licenses / "Electron-LICENSE.txt").read_bytes(),
-        "resources/licenses/Chromium-LICENSES.html": (generated_licenses / "Chromium-LICENSES.html").read_bytes(),
-    }
-    if sha256(source_files["resources/licenses/Go-LICENSE"]) != license_lock["go"]["sha256"]:
-        raise RuntimeError("generated Go license does not match packaging/license-lock.json")
-    source_files.update(locked_ffmpeg_license_files(generated_licenses, ffmpeg_license_sha256))
-    archive = verify_archive(args.archive.resolve(), args.target, executable, source_files)
     record = {
         "tag": args.tag or None,
         "version": args.version,

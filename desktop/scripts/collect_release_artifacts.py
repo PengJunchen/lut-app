@@ -75,7 +75,10 @@ def validate_build_metadata(metadata: object, target: str, filename: str, archiv
     archive_record = f"archive/{filename}"
     if by_path.get(archive_record) != file_sha256(archive_path):
         raise ValueError(f"{target} archive checksum does not match its build metadata")
-    archive_members = {path: checksum for path, checksum in by_path.items() if path.startswith("archive/resources/")}
+    archive_members = {
+        path: checksum for path, checksum in by_path.items()
+        if path.startswith("archive/") and path != archive_record
+    }
     if len(archive_members) != counts["archive_resource_files"]:
         raise ValueError(f"{target} resource file count does not match its build metadata")
     if not any(path == "embedded/assets/catalog.json" for path in by_path):
