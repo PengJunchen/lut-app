@@ -1,0 +1,61 @@
+name: DJI LUT 覆盖请求
+description: 提交新的官方 LUT 来源或请求核对机型映射
+title: "[LUT Coverage] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请提供可核验的 DJI 官方页面和素材元数据。此表单用于研究和目录整理，不代表该机型已具备自动转换支持。
+        不要上传 `.cube` 文件、视频、序列号或包含私人路径的处理报告。
+  - type: input
+    id: product
+    attributes:
+      label: DJI 页面列出的产品名称
+      description: 按官方页面填写具体型号或产品系列。
+    validations:
+      required: true
+  - type: input
+    id: gamma
+    attributes:
+      label: 视频元数据中的 Gamma 值
+      description: 如已确认，请填写 com.dji.camera.ColorGammaSxS 字段的值；没有素材可填“未知”。
+      placeholder: D-Log M
+    validations:
+      required: true
+  - type: dropdown
+    id: profile
+    attributes:
+      label: 目标输入模式
+      options:
+        - D-Log
+        - D-Log2
+        - D-Log M
+        - HLG
+        - 其他或未知
+    validations:
+      required: true
+  - type: input
+    id: official_page
+    attributes:
+      label: DJI 官方 LUT 详情页
+      description: 提供 DJI 官方下载页面地址。
+      placeholder: https://www.dji.com/...
+    validations:
+      required: true
+  - type: input
+    id: source_file
+    attributes:
+      label: 官方下载文件地址（若可见）
+      description: ZIP 文件请同时在背景中注明候选 LUT 的确切压缩包成员路径。
+  - type: textarea
+    id: version_and_scope
+    attributes:
+      label: 页面版本、用途与兼容说明
+      description: 提供页面标注的版本、Standard/Vivid 或创意用途，以及页面上的兼容产品说明。不要推断未标注的相机兼容关系。
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: 补充信息（可选）
+      description: 可提供脱敏后的 SHA-256、LUT 网格尺寸或兼容性来源。自动映射需另行核验，提交请求不会自动启用转换。

@@ -1,0 +1,26 @@
+name: 功能建议
+description: 说明希望改善的用户流程或能力
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先描述实际遇到的任务或困难。请勿附带私人素材或未脱敏的运行报告。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 当前问题
+      description: 你正在完成什么任务，现有行为在哪一步受阻？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望行为
+      description: 说明希望应用如何表现，必要时给出一个通用示例。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 其他背景或方案（可选）

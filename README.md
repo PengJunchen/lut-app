@@ -1,84 +1,69 @@
 # DJI LUT
 
-DJI LUT identifies DJI Log footage and restores it with a matching DJI 3D LUT. The Electron desktop package opens the Chinese interface in its own window; the standalone Go package opens the same local interface in the default browser. Both use the same on-device Go engine.
+DJI LUT 是一个本地运行的视频色彩还原工具，根据 DJI 视频元数据选择匹配的官方 LUT，并把处理结果保存为独立文件。
 
-## Electron desktop package
+An offline tool for exploring DJI's official LUT catalog and restoring supported DJI Log footage.
 
-The Electron package includes the Go engine with its selected LUTs, FFmpeg, FFprobe, and license notices. Users do not need Node.js, Go, Python, FFmpeg, or network access at runtime. The app defaults to the folder containing the installed app; users can select a different source folder in the native folder picker. Outputs remain under `Output/Standard/` or `Output/Vivid/` unless a different output base is selected.
+项目面向 **DJI 全系列官方 LUT** 建立目录并逐步扩展转换覆盖；当前版本只会自动处理 `assets/catalog.json` 中已有精确机型、Log 模式与风格映射的素材。这里的“面向全系列”不表示所有 DJI 相机都已支持自动识别或完成实机验证。
 
-The interface defaults to a guided workflow: choose files, review the plan, then process and inspect results. The top-bar mode switch retains the classic layout without resetting the batch. LUT resources are opened on demand; file lists are paginated and details remain available for each file. Returning to settings preserves the plan until a setting changes, while an active batch keeps its settings locked.
+[RC 下载页](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) · [使用说明](docs/USAGE.zh-CN.md) · [技术架构](docs/ARCHITECTURE.zh-CN.md) · [贡献指南](CONTRIBUTING.md)
 
-| Target | Minimum system | Archive |
-| --- | --- | --- |
-| macOS arm64 | macOS 13 | `DJI-LUT-macOS-AppleSilicon.zip` |
-| macOS x86_64 | macOS 13 | `DJI-LUT-macOS-Intel.zip` |
-| Windows x64 | Windows 10 | `DJI-LUT-Windows-x64.zip` |
+## 当前覆盖范围
 
-Electron 44 requires macOS 13 or newer ([upstream platform change](https://www.electronjs.org/docs/latest/breaking-changes)). Electron packages are built separately under `dist/electron/`; the existing Go/browser packages continue to use `dist/`.
+截至 2026-10-08，官方目录核查记录了 44 个 DJI LUT 详情页，其中 4 个旧页面已被后续版本替代。`assets/library.json` 保留 58 条来源与机型资产记录；相同内容按 SHA-256 去重后对应 40 个 `.cube` 文件。`assets/catalog.json` 另有 44 条精确的机型、Log 模式和风格自动映射。这些数字分别表示详情页、目录记录、实际 LUT 文件和自动映射，不能互相替代。来源与版本细节见 [官方 LUT 核查记录](docs/DJI_LUT_RESEARCH.zh-CN.md) 和 [资产来源清单](assets/SOURCES.md)。
 
-See [Electron desktop usage and build instructions](docs/ELECTRON.zh-CN.md) for setup and packaging details. The desktop window can be started in development with `npm start` after preparing its Go sidecar. Run `npm test` for the Electron-side tests.
+自动转换要求程序能从媒体元数据识别受支持的 DJI 相机，并在 `com.dji.camera.ColorGammaSxS` 字段中识别 D-Log、D-Log2 或 D-Log M；之后还必须找到对应的机型、输入模式和所选风格映射。机型或 Gamma 元数据缺失、冲突、无法识别，或没有精确 LUT 映射时，程序不会猜测或回退到相近型号。
 
-## Run a release package
+| 情况 | 当前行为 |
+| --- | --- |
+| 元数据可识别且存在匹配的 D-Log / D-Log2 / D-Log M LUT | 按所选 Standard 或 Vivid 风格转换 |
+| Normal / Rec.709 或可识别的 HDR（含 HLG）素材 | 原样复制，不套 Log LUT |
+| 未知、缺失或相互冲突的机型 / Gamma 信息 | 原样复制并标记待核查 |
+| HLG、创意调色、sRGB、Linear 等非自动还原 LUT | 可在 LUT 清单中浏览，不参与自动转换 |
 
-Put the platform package beside the source videos and launch it:
+文件扩展名只用于发现候选文件，不代表 FFmpeg 一定能解码、文件一定带有可靠的 DJI 元数据，或该机型一定有自动映射。裸 H.264/H.265、OSV 全景或多路主视频等特殊素材可能会被保留待核查。具体格式和处理行为见[使用说明](docs/USAGE.zh-CN.md)。
 
-| Package | Platform | Minimum system |
-| --- | --- | --- |
-| `Mac-AppleSilicon.zip` | macOS arm64 | macOS 12 |
-| `Mac-Intel.zip` | macOS x86_64 | macOS 12 |
-| `Windows-x64.zip` | Windows x64 | Windows 10 |
+## 下载与发布
 
-The package includes FFmpeg, FFprobe, the Chinese interface, and the LUT files selected when that release was built. It needs no Go, Python, FFmpeg installation, or network access at runtime. macOS apps are ad-hoc signed and are not notarized; Windows executables are unsigned.
+首个公开 RC 目标版本为 `0.0.1-rc.0`，Git tag 和 GitHub Release 名称为 **`rc0.0.1`**。发布生成后，可从 [rc0.0.1 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) 下载：
 
-The Chinese interface lets users paste a local source path or choose a folder with the system picker. The output base can also be chosen; leaving it blank saves beside the source folder under `Output`, and the page shows the final `Standard` or `Vivid` destination. Scanning is non-recursive by default. The app reads DJI `com.dji.camera.ColorGammaSxS` metadata and matches camera, profile, and look to the catalog. Normal/Rec.709 and HDR footage is copied unchanged. Unknown, unsupported, or conflicting metadata is copied unchanged and marked for review. An unavailable look does not fall back to another LUT. Source videos are never overwritten; an unverified existing output is reported as a conflict.
+| 平台 | 下载 |
+| --- | --- |
+| macOS Apple Silicon | [DJI-LUT-macOS-AppleSilicon.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-macOS-AppleSilicon.zip) |
+| macOS Intel | [DJI-LUT-macOS-Intel.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-macOS-Intel.zip) |
+| Windows x64 | [DJI-LUT-Windows-x64.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-Windows-x64.zip) |
 
-Each batch requires a fresh scan before processing. An empty scan cannot be started, and changing a setting invalidates its preview. After processing, users can open the output folder, export the report, or clear the old progress and start a new batch.
+发行目标为 macOS 13 或更新版本（Apple Silicon 与 Intel）以及 Windows 10 x64。PR 和 `main` 的自动检查覆盖三种构建目标；推送 `rc*` 或 `v*` tag 会构建三种发行包并附加到 GitHub Release。发布维护者需先在合并到 `main` 的提交中同步应用版本字段，再创建 tag；发布工作流按 tag 校验源码版本，不临时改写版本文件。构建与状态可在 [GitHub Actions](https://github.com/PengJunchen/lut-app/actions) 查看。
 
-When the output base is blank, outputs are written under `Output/Standard/` or `Output/Vivid/`; a selected base directory receives the corresponding style subfolder. Converted video is re-encoded as 10-bit HEVC Rec.709, so the video pixels are not lossless; audio streams are copied. Unmodified footage is copied byte-for-byte. See [Chinese usage instructions](docs/USAGE.zh-CN.md) and [LUT source notes](assets/SOURCES.md) for user workflow and the registered camera/profile/look combinations.
+桌面包包含 Electron 界面、Go 引擎、FFmpeg、FFprobe 和构建时锁定的 LUT 资源，日常运行不要求另装这些工具，也不需要网络。macOS 包使用 ad-hoc 签名且未公证；Windows 包没有商业代码签名。发行包与本地构建所含第三方材料的许可边界见 [THIRD_PARTY.md](THIRD_PARTY.md)。
 
-## LUT coverage and format handling
+## 使用特性
 
-The full library includes current official restoration, creative, HLG, sRGB and Linear conversion assets. The UI shows versions, output spaces and automatic eligibility. Automatic processing only uses a validated 3D Cube restoring the exact camera, Log profile and selected look to Rec.709. Other purposes remain available for reference. See [the official-source audit](docs/DJI_LUT_RESEARCH.zh-CN.md).
+- 在本机扫描文件夹，先查看逐文件处理计划，再启动批次；默认不递归扫描子文件夹。
+- 原片不会被覆盖。转换文件写入 `Output/Standard/` 或 `Output/Vivid/`，也可以选择其他输出基础目录。
+- 转换视频重新编码为 10-bit HEVC Rec.709，音频码流尽量复制；不需要 LUT 的素材按字节复制。
+- 批次结束后可查看或导出 JSON 报告。报告含文件路径、名称和摘要；分享前应先删除个人路径等信息。
+- Go 版也可启动本机浏览器界面或使用无界面批处理。Electron 桌面版复用同一 Go 引擎。
 
-Versions are compared within the same camera, input profile, output space and look. A newer D-Log LUT does not replace a D-Log2 LUT. The manifests are pinned snapshots; runtime does not silently download updated LUTs.
+## 从源码开始
 
-Discovery includes MOV, MP4, MKV, MXF, transport streams, raw H.264/H.265 and other extensions shown in the app. An extension does not guarantee an available decoder or usable DJI metadata. Raw H.264/H.265 streams lack a reliable embedded timing/camera contract and remain unchanged for review, as do native OSV panorama, spherical or multiple main video streams. Converted video uses 10-bit HEVC; audio is copied into MP4 when compatible, otherwise MKV. Normal, HDR, unknown and unmatched clips remain byte-for-byte copies.
+需要 Go 1.24 或更高版本。普通 Go 源码测试不需要下载 FFmpeg、LUT 或其他运行时文件：
 
-## Build from a source checkout
+```sh
+go test ./...
+```
 
-A clean source checkout intentionally contains neither LUT bytes nor FFmpeg binaries. It supports source tests, but the app needs a prepared release build to run.
+Electron 开发还需要 Node.js 22.12 或更高版本：
 
-1. Install Go 1.24 or newer (1.26 recommended) and Python 3.10 or newer. To prepare and package the Electron desktop app, also install Node.js 22.12 or newer and run `npm ci` to install the exact versions in `package-lock.json`.
-2. Test the source without third-party payloads:
+```sh
+npm ci
+npm test
+```
 
-   ```sh
-   go test ./...
-   ```
+完整的运行时准备、LUT 校验和平台打包步骤见[桌面版构建说明](docs/ELECTRON.zh-CN.md)。核心模块与数据之间的关系见[技术架构](docs/ARCHITECTURE.zh-CN.md)；如何提报问题、扩展 LUT 清单和提交修改见[贡献指南](CONTRIBUTING.md)。
 
-3. Prepare the FFmpeg runtime for the target. The URLs, archive hashes, binary hashes, version, platform, and minimum OS are tracked in [`packaging/runtime-lock.json`](packaging/runtime-lock.json):
+## 许可证与项目声明
 
-   ```sh
-   python3 packaging/prepare_runtime.py darwin-arm64
-   ```
+[`LICENSE`](LICENSE) 中的 MIT 许可适用于项目原创源码，不自动覆盖 DJI LUT、FFmpeg、Electron、Chromium 或发行包中的其他第三方材料。项目目前没有确认 DJI LUT 文件的再分发授权；获取官方公开下载地址不等于取得再分发许可。不要将本项目的 MIT 许可当作 LUT 文件或包含 LUT 的发行包的授权依据，详情见 [THIRD_PARTY.md](THIRD_PARTY.md)。
 
-   Use `darwin-amd64` or `windows-amd64` for those packages. The script downloads into ignored `packaging/downloads/`, verifies each archive and executable, and writes a clean local cache with the applicable FFmpeg and Go license files.
-
-4. Prepare all LUT files from the pinned official sources in [`assets/library.json`](assets/library.json). The script downloads direct files or the exact listed member of a ZIP, checks both archive and payload hashes, and publishes the complete library atomically:
-
-   ```sh
-   python3 packaging/prepare_luts.py
-   ```
-
-   Files are installed under ignored `assets/luts/` only after every SHA-256 matches. Superseded files are removed from that managed directory after successful staging. `--source-dir /path/to/luts` optionally imports matching local files without changing them. DJI LUT redistribution rights are not documented here; see [THIRD_PARTY.md](THIRD_PARTY.md) before sharing a built package.
-
-5. Build one or more release targets:
-
-   ```sh
-   python3 packaging/build.py darwin-arm64
-   ```
-
-   The build verifies every LUT and runtime against the tracked lock/catalog, uses the `bundled` Go build tag, and writes packages under ignored `dist/`. Supported targets are `darwin-arm64`, `darwin-amd64`, and `windows-amd64`. A clean clone can run `go test ./...` without steps 3 or 4.
-
-6. To build the Electron app, prepare the same locked runtime and LUT inputs, then run `npm run build:desktop -- darwin-arm64 darwin-amd64 windows-amd64` to build all supported targets, or pass one target. Omit targets to build the native host architecture. `npm run build:engine` builds only the native Go sidecar for `npm start` development. See [Electron desktop usage and build instructions](docs/ELECTRON.zh-CN.md) for the full workflow.
-
-The package build does not copy local validation JSON, screenshots, or version-command output. The project source is MIT-licensed as described in [LICENSE](LICENSE); third-party components have separate terms.
+本项目为社区工具，不是 DJI 官方应用，也未获 DJI 背书。

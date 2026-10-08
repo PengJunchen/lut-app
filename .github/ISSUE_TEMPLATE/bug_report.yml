@@ -1,0 +1,65 @@
+name: 问题报告
+description: 报告可复现的应用或处理问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索现有问题。不要上传原片、未脱敏的处理报告或完整调试日志。
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 填写 Release 页面显示的版本或 tag。
+      placeholder: 0.0.1-rc.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - macOS Apple Silicon
+        - macOS Intel
+        - Windows x64
+        - 源码运行
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 使用通用路径和素材名，描述从启动应用到出现问题的步骤。
+      placeholder: |
+        1. 打开应用
+        2. 选择一个测试目录并扫描
+        3. ……
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: 预期结果与实际结果
+      placeholder: 说明界面显示或输出结果有哪些差异。
+    validations:
+      required: true
+  - type: textarea
+    id: metadata
+    attributes:
+      label: 相关媒体元数据（可选）
+      description: 如有帮助，可提供已脱敏的相机型号、com.dji.camera.ColorGammaSxS 和 encoder 字段。不要提供序列号或私人媒体文件。
+      render: text
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 脱敏后的错误信息（可选）
+      description: 处理报告和日志可能带有本机路径、文件名和媒体元数据；分享前请检查并脱敏。
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已移除原片、个人路径、文件名、相机序列号、访问令牌和未脱敏日志。
+          required: true
