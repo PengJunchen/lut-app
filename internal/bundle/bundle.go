@@ -199,7 +199,7 @@ func verify(root string) error {
 
 func safePath(root, rel string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash(rel))
-	if rel == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.Contains(rel, "\\") || strings.Contains(rel, ":") {
+	if rel == "" || strings.HasPrefix(rel, "/") || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || strings.Contains(rel, "\\") || strings.Contains(rel, ":") {
 		return "", fmt.Errorf("unsafe archive path %q", rel)
 	}
 	return filepath.Join(root, clean), nil

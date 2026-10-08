@@ -40,7 +40,17 @@ func TestRuntimeArchiveRejectsEscapeAndSymlinks(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		kind byte
-	}{{"../outside", tar.TypeReg}, {"/absolute", tar.TypeReg}, {"C:/outside", tar.TypeReg}, {"bin\\outside", tar.TypeReg}, {"bin/tool", tar.TypeSymlink}} {
+	}{
+		{"../outside", tar.TypeReg},
+		{"folder/../../outside", tar.TypeReg},
+		{"/absolute", tar.TypeReg},
+		{"//server/share", tar.TypeReg},
+		{"C:/outside", tar.TypeReg},
+		{"C:\\outside", tar.TypeReg},
+		{"\\\\server\\share", tar.TypeReg},
+		{"bin\\outside", tar.TypeReg},
+		{"bin/tool", tar.TypeSymlink},
+	} {
 		t.Run(c.name, func(t *testing.T) {
 			if err := unpack(testArchive(t, c.name, c.kind), t.TempDir()); err == nil {
 				t.Fatal("unsafe archive accepted")

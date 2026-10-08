@@ -235,7 +235,7 @@ func TestSelectFolderCancellationPreservesPathAndApplicationState(t *testing.T) 
 
 func TestSelectFolderValidatesTargetAndSelectedDirectory(t *testing.T) {
 	input := t.TempDir()
-	selected := filepath.Join(t.TempDir(), "选中的目录 ")
+	selected := filepath.Join(t.TempDir(), "选中的 目录")
 	if err := os.Mkdir(selected, 0o755); err != nil {
 		t.Fatal(err)
 	}
