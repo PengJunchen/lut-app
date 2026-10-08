@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 
+	"dji-lut-app/assets"
 	"dji-lut-app/internal/engine"
 )
 
@@ -100,6 +102,105 @@ func TestBootstrapKeepsDefaultOutputRelativeToChosenInput(t *testing.T) {
 	}
 	if defaults["look"] != engine.LookVivid || defaults["recursive"] != true {
 		t.Fatalf("bootstrap did not preserve CLI look/recursive: %#v", defaults)
+	}
+	if got, want := bootstrap["supported_video_extensions"], engine.SupportedVideoExtensions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("supported_video_extensions = %#v, want engine discovery extensions %#v", got, want)
+	}
+}
+
+func TestLoadLibraryDecodesSchemaOneAndPreservesAssetFields(t *testing.T) {
+	data := []byte(`{"schema":1,"assets":[{"id":"verified-lut","title":"Verified LUT","provenance":{"url":"https://example.test/source"},"cameras":[{"id":"pocket4p","name":"Pocket 4P"}]}]}`)
+	got := loadLibrary(fstest.MapFS{"library.json": &fstest.MapFile{Data: data}})
+	want := map[string]any{
+		"schema": float64(1),
+		"assets": []any{map[string]any{
+			"id": "verified-lut", "title": "Verified LUT",
+			"provenance": map[string]any{"url": "https://example.test/source"},
+			"cameras":    []any{map[string]any{"id": "pocket4p", "name": "Pocket 4P"}},
+		}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded library = %#v, want %#v", got, want)
+	}
+}
+
+func TestBootstrapIncludesEmbeddedLibrary(t *testing.T) {
+	input := t.TempDir()
+	bootstrap := newApplication(engine.Config{}, nil, input).Bootstrap().(map[string]any)
+	got, ok := bootstrap["library"].(map[string]any)
+	if !ok {
+		t.Fatalf("bootstrap library = %T, want decoded object", bootstrap["library"])
+	}
+	data, err := assets.FS.ReadFile("library.json")
+	if err != nil {
+		t.Fatalf("embedded library is unavailable: %v", err)
+	}
+	want := decodeLibrary(data)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("bootstrap library differs from embedded library: got %#v, want %#v", got, want)
+	}
+	libraryAssets, ok := got["assets"].([]any)
+	if !ok || len(libraryAssets) == 0 {
+		t.Fatalf("bootstrap library assets = %#v, want a non-empty embedded library", got["assets"])
+	}
+}
+
+func TestPendingStatePreservesLUTNameAndVersion(t *testing.T) {
+	items := makeStateItems([]engine.ItemPlan{{
+		Input: "clip.mov", LUTFile: "sha256-abcd.cube", LUTName: "DJI Osmo Pocket LUT", LUTVersion: "2.0",
+	}}, true)
+	if len(items) != 1 {
+		t.Fatalf("pending state item count = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.Status != "pending" || item.LUTName != "DJI Osmo Pocket LUT" || item.LUTVersion != "2.0" {
+		t.Fatalf("pending item lost planned LUT identity: %#v", item.ItemReport)
+	}
+}
+
+func TestCompletedLogUsesLUTNameAndVersionInsteadOfContentHash(t *testing.T) {
+	app := &application{state: appState{Items: []stateItem{}, Logs: []string{}}}
+	item := engine.ItemReport{
+		Input: "clip.mov", Status: engine.StatusEncoded, LUTFile: "sha256-abcd.cube",
+		LUTName: "DJI Osmo Pocket LUT", LUTVersion: "2.0",
+	}
+	app.onEvent(engine.Event{Type: "item_completed", Path: item.Input, Item: &item})
+	state := app.State().(appState)
+	if len(state.Logs) != 1 {
+		t.Fatalf("completion log count = %d, want 1", len(state.Logs))
+	}
+	if !strings.Contains(state.Logs[0], "DJI Osmo Pocket LUT · v2.0") || strings.Contains(state.Logs[0], "sha256-abcd.cube") {
+		t.Fatalf("completion log = %q, want friendly LUT title/version without content hash", state.Logs[0])
+	}
+}
+
+func TestLoadLibraryFallsBackForMissingOrInvalidData(t *testing.T) {
+	fallback := map[string]any{
+		"schema":  float64(1),
+		"assets":  []any{},
+		"cameras": []any{},
+	}
+	for _, test := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "missing"},
+		{name: "malformed", data: []byte(`{"schema":`)},
+		{name: "wrong schema", data: []byte(`{"schema":2,"assets":[],"cameras":[]}`)},
+		{name: "missing assets", data: []byte(`{"schema":1}`)},
+		{name: "invalid camera", data: []byte(`{"schema":1,"assets":[{"cameras":[{"id":"pocket4p"}]}]}`)},
+		{name: "invalid top-level cameras", data: []byte(`{"schema":1,"assets":[],"cameras":[{"id":"pocket4p"}]}`)},
+		{name: "non-object asset", data: []byte(`{"schema":1,"assets":[null]}`)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := fstest.MapFS{}
+			if test.data != nil {
+				source["library.json"] = &fstest.MapFile{Data: test.data}
+			}
+			if got := loadLibrary(source); !reflect.DeepEqual(got, fallback) {
+				t.Fatalf("library fallback = %#v, want %#v", got, fallback)
+			}
+		})
 	}
 }
 

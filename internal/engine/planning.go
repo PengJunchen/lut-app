@@ -57,7 +57,7 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 	}
 	lookup := make(map[string]LUTSpec, len(catalog))
 	for _, entry := range catalog {
-		lookup[catalogKey(entry.Camera, entry.Profile, entry.Look)] = entry
+		lookup[catalogKey(entry.Camera, entry.Profile, entry.Look, entry.OutputColorSpace, entry.Purpose)] = entry
 	}
 	type verification struct {
 		grid   int
@@ -103,6 +103,16 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 		if statErr == nil {
 			fp.sourceModTime = st.ModTime()
 		}
+		if strings.EqualFold(filepath.Ext(path), ".osv") {
+			fp.public.Reason = "DJI OSV panoramic source requires the dedicated DJI Studio workflow; copied for review"
+			out = append(out, fp)
+			continue
+		}
+		if isRawElementaryVideo(path) {
+			fp.public.Reason = "raw elementary video has no reliable embedded timing or camera metadata contract; copied for review"
+			out = append(out, fp)
+			continue
+		}
 		probe, probeErr := probeFile(ctx, path, cfg.ffprobe)
 		if probeErr != nil {
 			if ctx.Err() != nil {
@@ -115,6 +125,16 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 			continue
 		}
 		fp.probe, fp.hasProbe = probe, true
+		if mainVideoCount(probe) > 1 {
+			fp.public.Reason = "multiple main video tracks require explicit selection; copied for review"
+			out = append(out, fp)
+			continue
+		}
+		if hasSphericalProjection(probe) {
+			fp.public.Reason = "spherical or projected video metadata requires a dedicated workflow; copied for review"
+			out = append(out, fp)
+			continue
+		}
 		gamma := classifyGamma(probe)
 		fp.gamma = gamma.raw
 		fp.public.Gamma = gamma.raw
@@ -149,12 +169,15 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 		}
 		fp.camera = camera
 		fp.public.Camera = camera
-		entry, ok := lookup[catalogKey(camera, gamma.profile, cfg.Look)]
+		entry, ok := lookup[catalogKey(camera, gamma.profile, cfg.Look, outputRec709, purposeRestore)]
 		if !ok {
 			fp.public.Reason = fmt.Sprintf("no LUT configured for camera=%s profile=%s look=%s; copied for review", camera, gamma.profile, cfg.Look)
 			out = append(out, fp)
 			continue
 		}
+		fp.public.LUTFile = entry.File
+		fp.public.LUTName = entry.Name
+		fp.public.LUTVersion = entry.Version
 		stat, statErr := os.Stat(entry.File)
 		cacheKey := entry.File + "|" + entry.SHA256 + "|" + fmt.Sprint(entry.Grid)
 		if statErr == nil {
@@ -167,7 +190,6 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 		}
 		grid, digest, verifyErr := verificationResult.grid, verificationResult.digest, verificationResult.err
 		if verifyErr != nil {
-			fp.public.LUTFile = entry.File
 			fp.public.LUTSHA256 = digest
 			fp.public.Reason = fmt.Sprintf("matching LUT is unavailable or invalid (%v); copied for review", verifyErr)
 			out = append(out, fp)
@@ -175,7 +197,6 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 		}
 		_ = grid
 		fp.lut = &entry
-		fp.public.LUTFile = entry.File
 		fp.public.LUTSHA256 = digest
 		fp.rotation, err = rotationDegrees(video)
 		if err != nil {
@@ -196,9 +217,10 @@ func scanFiles(ctx context.Context, cfg normalizedConfig) ([]filePlan, error) {
 			continue
 		}
 		baseName := filepath.Base(rel)
-		outRel := filepath.Join(filepath.Dir(filepath.FromSlash(rel)), baseName+".Rec709.mp4")
+		extension := outputExtension(probe)
+		outRel := filepath.Join(filepath.Dir(filepath.FromSlash(rel)), baseName+".Rec709"+extension)
 		if filepath.Dir(filepath.FromSlash(rel)) == "." {
-			outRel = baseName + ".Rec709.mp4"
+			outRel = baseName + ".Rec709" + extension
 		}
 		fp.output = filepath.Join(cfg.outputRoot, outRel)
 		fp.public.Output = filepath.ToSlash(outRel)
@@ -220,8 +242,25 @@ func catalogFor(cfg normalizedConfig) ([]LUTSpec, error) {
 	return LoadCatalog(cfg.ManifestPath, cfg.lutDirAbs)
 }
 
-func catalogKey(camera, profile string, look Look) string {
-	return strings.ToLower(strings.TrimSpace(camera)) + "\x00" + normalizeProfile(profile) + "\x00" + strings.ToLower(strings.TrimSpace(string(look)))
+func catalogKey(camera, profile string, look Look, outputColorSpace, purpose string) string {
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(camera)), normalizeProfile(profile),
+		strings.ToLower(strings.TrimSpace(string(look))), normalizeOutputColorSpace(outputColorSpace),
+		strings.ToLower(strings.TrimSpace(purpose)),
+	}, "\x00")
+}
+
+func outputExtension(probe Probe) string {
+	for _, stream := range audioStreams(probe) {
+		switch strings.ToLower(strings.TrimSpace(stream.CodecName)) {
+		case "aac", "mp3", "ac3", "eac3", "alac":
+			// These codecs can be copied into the current MP4 output.
+		default:
+			// PCM, FLAC and other codecs remain stream-copied in Matroska.
+			return ".mkv"
+		}
+	}
+	return ".mp4"
 }
 
 func resolveRange(value string) (string, error) {

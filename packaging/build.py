@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,26 @@ import shutil
 import subprocess
 import tarfile
 import zipfile
+
+
+def _load_prepare_luts():
+    """Load the sibling helper by exact path, even when imported by another script."""
+    helper_path = Path(__file__).resolve().with_name("prepare_luts.py")
+    spec = importlib.util.spec_from_file_location("dji_lut_prepare_luts", helper_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load LUT packaging helpers from {helper_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_prepare_luts = _load_prepare_luts()
+LUTError = _prepare_luts.LUTError
+load_catalog = _prepare_luts.load_catalog
+load_library = _prepare_luts.load_library
+safe_relative_path = _prepare_luts.safe_relative_path
+file_sha256 = _prepare_luts.sha256
+validate_sha256 = _prepare_luts.validate_sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "packaging" / "runtime-lock.json").read_text(encoding="utf-8"))
@@ -117,19 +138,186 @@ def copy_licenses(target: str, destination: Path) -> None:
             shutil.copy2(source, target_path)
 
 
-def verify_luts() -> None:
-    catalog = json.loads((ROOT / "assets" / "catalog.json").read_text(encoding="utf-8"))
-    for entry in catalog["entries"]:
-        path = ROOT / "assets" / Path(entry["file"])
+def _catalog_file(entry: dict, index: int, legacy_shape: bool) -> str:
+    raw_file = entry.get("file")
+    if legacy_shape and isinstance(raw_file, str) and raw_file.startswith("luts/"):
+        raw_file = raw_file[len("luts/"):]
+    try:
+        return safe_relative_path(raw_file, f"catalog entry {index} file").as_posix()
+    except LUTError as error:
+        raise SystemExit(f"Invalid LUT catalog: {error}") from error
+
+
+def _catalog_hash(entry: dict, index: int) -> str:
+    try:
+        return validate_sha256(entry.get("sha256"), f"catalog entry {index} sha256")
+    except LUTError as error:
+        raise SystemExit(f"Invalid LUT catalog: {error}") from error
+
+
+def _check_payload(root: Path, relative: str, expected: str, label: str) -> None:
+    path = root / "assets" / "luts" / Path(*relative.split("/"))
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit(
+            f"Missing LUT payload {relative}; run python3 packaging/prepare_luts.py"
+        )
+    actual = file_sha256(path)
+    if actual.lower() != expected.lower():
+        raise SystemExit(
+            f"LUT checksum differs from {label} for {relative}: expected {expected}, got {actual}"
+        )
+
+
+def _catalog_payloads(
+    root: Path,
+    entries: list[dict],
+    *,
+    library: dict | None,
+    legacy_shape: bool,
+) -> set[str]:
+    if library is None:
+        expected: set[str] = set()
+        for index, entry in enumerate(entries):
+            relative = _catalog_file(entry, index, legacy_shape=True)
+            checksum = _catalog_hash(entry, index)
+            _check_payload(root, relative, checksum, "catalog")
+            expected.add(relative)
+        return expected
+
+    assets_by_id = {asset["id"]: asset for asset in library["assets"]}
+    expected = {asset["file"] for asset in library["assets"]}
+    for index, entry in enumerate(entries):
+        library_id = entry.get("library_id")
+        if library_id is None and legacy_shape:
+            relative = _catalog_file(entry, index, legacy_shape=True)
+            checksum = _catalog_hash(entry, index)
+            _check_payload(root, relative, checksum, "legacy catalog")
+            expected.add(relative)
+            continue
+        if not isinstance(library_id, str) or library_id not in assets_by_id:
+            raise SystemExit(
+                f"Catalog entry {index} must reference a known library_id when library.json is present"
+            )
+        asset = assets_by_id[library_id]
+        relative = _catalog_file(entry, index, legacy_shape=False)
+        checksum = _catalog_hash(entry, index)
+        if relative != asset["file"] or checksum != asset["sha256"]:
+            raise SystemExit(
+                f"Catalog entry {index} file/checksum does not match library asset {library_id}"
+            )
+        camera = entry.get("camera")
+        cameras = asset.get("cameras")
+        camera_ids = {
+            camera_record.get("id")
+            for camera_record in cameras
+            if isinstance(camera_record, dict) and isinstance(camera_record.get("id"), str)
+        } if isinstance(cameras, list) else set()
+        if not isinstance(camera, str) or camera not in camera_ids:
+            raise SystemExit(
+                f"Catalog entry {index} camera does not match library asset {library_id}"
+            )
+        for field in (
+            "profile",
+            "look",
+            "version",
+            "title",
+            "grid",
+            "format",
+            "output_color_space",
+            "purpose",
+        ):
+            if field in entry and entry[field] != asset.get(field):
+                raise SystemExit(
+                    f"Catalog entry {index} {field} does not match library asset {library_id}"
+                )
+        dimension = str(asset.get("dimension", "")).strip().lower()
+        has_1d_signal = dimension in {"1", "1d", "1-d"} or asset.get("lut_1d_size") not in (
+            None, "", 0, "0"
+        )
+        grid = asset.get("grid")
+        if (
+            asset.get("automatic") is not True
+            or asset.get("profile") not in {"dlog", "dlog2", "dlogm"}
+            or asset.get("output_color_space") != "rec709"
+            or asset.get("purpose") != "restore"
+            or asset.get("format") != "cube"
+            or not isinstance(grid, int)
+            or isinstance(grid, bool)
+            or grid < 2
+            or has_1d_signal
+        ):
+            raise SystemExit(
+                f"Catalog entry {index} references a non-automatic-safe Log-to-Rec.709 library asset: {library_id}"
+            )
+    return expected
+
+
+def _payload_file_set(root: Path) -> set[str]:
+    lut_root = root / "assets" / "luts"
+    if lut_root.is_symlink():
+        raise SystemExit(f"Refusing symlinked LUT directory: {lut_root}")
+    if not lut_root.exists():
+        return set()
+    if not lut_root.is_dir():
+        raise SystemExit(f"LUT payload path is not a directory: {lut_root}")
+    found: set[str] = set()
+    seen_casefold: set[str] = set()
+    for path in lut_root.rglob("*"):
+        if path.is_symlink():
+            raise SystemExit(f"Unexpected symlink in LUT payload tree: {path}")
+        if path.is_dir():
+            continue
         if not path.is_file():
-            raise SystemExit(f"Missing LUT; run python3 packaging/prepare_luts.py: {path.name}")
-        if digest(path.read_bytes()) != entry["sha256"]:
-            raise SystemExit(f"LUT checksum differs from catalog: {path.name}")
+            raise SystemExit(f"Unexpected non-file entry in LUT payload tree: {path}")
+        relative = path.relative_to(lut_root).as_posix()
+        try:
+            normalized = safe_relative_path(relative, "payload path").as_posix()
+        except LUTError as error:
+            raise SystemExit(f"Unexpected payload file: {error}") from error
+        key = normalized.casefold()
+        if key in seen_casefold:
+            raise SystemExit(f"Case-colliding payload paths are not portable: {normalized}")
+        seen_casefold.add(key)
+        found.add(normalized)
+    return found
+
+
+def verify_luts(root: Path = ROOT) -> None:
+    """Verify every library/catalog asset and reject stale embedded payloads."""
+    try:
+        library = load_library(root)
+        _, entries, legacy_shape = load_catalog(root)
+    except LUTError as error:
+        raise SystemExit(f"Invalid LUT manifests: {error}") from error
+
+    expected: set[str] = set()
+    if library is not None:
+        for asset in library["assets"]:
+            relative = asset["file"]
+            _check_payload(root, relative, asset["sha256"], "library")
+            expected.add(relative)
+    expected.update(
+        _catalog_payloads(root, entries, library=library, legacy_shape=legacy_shape)
+    )
+    actual = _payload_file_set(root)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if unexpected:
+            details.append("unexpected/stale: " + ", ".join(unexpected))
+        raise SystemExit(
+            "LUT payload set differs from the current manifest ("
+            + "; ".join(details)
+            + "). Run python3 packaging/prepare_luts.py."
+        )
 
 
 def build(target: str) -> dict:
-    archive_runtime(target)
     verify_luts()
+    archive_runtime(target)
     goos, goarch = target.split("-")
     folder = ROOT / "dist" / TARGETS[target]
     if folder.exists():
@@ -183,6 +371,9 @@ def build(target: str) -> dict:
     shutil.copy2(ROOT / "packaging" / "license-lock.json", folder / "LICENSE-LOCK.json")
     shutil.copy2(ROOT / "assets" / "SOURCES.md", folder / "LUT-SOURCES.md")
     shutil.copy2(ROOT / "assets" / "catalog.json", folder / "LUT-catalog.json")
+    library_manifest = ROOT / "assets" / "library.json"
+    if library_manifest.is_file():
+        shutil.copy2(library_manifest, folder / "LUT-library.json")
     copy_licenses(target, folder / "licenses")
 
     archive = zip_release(folder)

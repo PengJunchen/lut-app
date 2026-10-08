@@ -42,6 +42,7 @@ type Stream struct {
 	Duration       string            `json:"duration"`
 	BitRate        string            `json:"bit_rate"`
 	NbFrames       string            `json:"nb_frames"`
+	NbReadPackets  string            `json:"nb_read_packets"`
 	SampleRate     string            `json:"sample_rate"`
 	Channels       int               `json:"channels"`
 	ChannelLayout  string            `json:"channel_layout"`
@@ -51,12 +52,22 @@ type Stream struct {
 }
 
 type SideData struct {
-	Type     string  `json:"side_data_type"`
-	Rotation float64 `json:"rotation"`
+	Type     string            `json:"side_data_type"`
+	Rotation float64           `json:"rotation"`
+	Tags     map[string]string `json:"tags"`
 }
 
 func probeFile(ctx context.Context, path, ffprobe string) (Probe, error) {
-	cmd := newCommandContext(ctx, ffprobe, "-v", "error", "-show_format", "-show_streams", "-of", "json", path)
+	return probeFileWithPacketCounts(ctx, path, ffprobe, false)
+}
+
+func probeFileWithPacketCounts(ctx context.Context, path, ffprobe string, countPackets bool) (Probe, error) {
+	args := []string{"-v", "error"}
+	if countPackets {
+		args = append(args, "-count_packets")
+	}
+	args = append(args, "-show_format", "-show_streams", "-of", "json", path)
+	cmd := newCommandContext(ctx, ffprobe, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	output, err := cmd.Output()
@@ -81,6 +92,44 @@ func probeFile(ctx context.Context, path, ffprobe string) (Probe, error) {
 	return result, nil
 }
 
+type frameColorMetadata struct {
+	ColorRange     string `json:"color_range"`
+	ColorSpace     string `json:"color_space"`
+	ColorPrimaries string `json:"color_primaries"`
+	ColorTransfer  string `json:"color_transfer"`
+}
+
+func probeDecodedFrameColors(ctx context.Context, path, ffprobe string) ([]frameColorMetadata, error) {
+	cmd := newCommandContext(ctx, ffprobe,
+		"-v", "error", "-select_streams", "v:0", "-read_intervals", "%+#8",
+		"-show_frames", "-show_entries", "frame=color_range,color_space,color_primaries,color_transfer",
+		"-of", "json", path,
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if len(detail) > 1200 {
+			detail = detail[len(detail)-1200:]
+		}
+		if detail != "" {
+			return nil, fmt.Errorf("ffprobe frame-color check failed: %w: %s", err, detail)
+		}
+		return nil, fmt.Errorf("ffprobe frame-color check failed: %w", err)
+	}
+	var result struct {
+		Frames []frameColorMetadata `json:"frames"`
+	}
+	if err := json.Unmarshal(output, &result); err != nil {
+		return nil, fmt.Errorf("parse ffprobe frame-color JSON: %w", err)
+	}
+	return result.Frames, nil
+}
+
 func mainVideo(probe Probe) (Stream, error) {
 	for _, stream := range probe.Streams {
 		if strings.EqualFold(stream.CodecType, "video") && stream.Disposition["attached_pic"] == 0 {
@@ -88,6 +137,55 @@ func mainVideo(probe Probe) (Stream, error) {
 		}
 	}
 	return Stream{}, fmt.Errorf("no non-attached video stream found")
+}
+
+func mainVideoCount(probe Probe) int {
+	count := 0
+	for _, stream := range probe.Streams {
+		if strings.EqualFold(stream.CodecType, "video") && stream.Disposition["attached_pic"] == 0 {
+			count++
+		}
+	}
+	return count
+}
+
+func hasSphericalProjection(probe Probe) bool {
+	checkTags := func(tags map[string]string) bool {
+		for key, value := range tags {
+			key = strings.ToLower(strings.TrimSpace(key))
+			compactKey := strings.NewReplacer("_", "", "-", "", ".", "", " ", "").Replace(key)
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				continue
+			}
+			if strings.Contains(compactKey, "projection") || strings.Contains(compactKey, "spherical") {
+				return true
+			}
+			if strings.Contains(compactKey, "mode") && isSphericalValue(value) {
+				return true
+			}
+		}
+		return false
+	}
+	if checkTags(probe.Format.Tags) {
+		return true
+	}
+	for _, stream := range probe.Streams {
+		if checkTags(stream.Tags) {
+			return true
+		}
+		for _, sideData := range stream.SideDataList {
+			if isSphericalValue(strings.ToLower(sideData.Type)) || checkTags(sideData.Tags) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isSphericalValue(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Contains(value, "spherical") || strings.Contains(value, "equirectangular") || strings.Contains(value, "360")
 }
 
 func metadataValues(probe Probe, key string) []string {

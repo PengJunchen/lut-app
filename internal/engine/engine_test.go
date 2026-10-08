@@ -105,6 +105,8 @@ func TestCatalogLoadsManifestRelativeLUTAndVerifiesGridHash(t *testing.T) {
 	manifest := map[string]any{"version": 1, "entries": []LUTSpec{{
 		Camera: "pocket3", Profile: "D-Log M", Look: LookStandard,
 		File: "luts/test.cube", SHA256: hex.EncodeToString(sum[:]), Grid: 2,
+		Version: "1.2", OutputColorSpace: "Rec.709", Purpose: "restore",
+		LibraryID: "pocket3-dlogm-v1.2", Name: "Pocket 3 D-Log M to Rec.709", Format: "cube",
 	}}}
 	data, _ := json.Marshal(manifest)
 	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
@@ -114,7 +116,7 @@ func TestCatalogLoadsManifestRelativeLUTAndVerifiesGridHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Profile != "dlogm" || entries[0].File != cubePath {
+	if len(entries) != 1 || entries[0].Profile != "dlogm" || entries[0].File != cubePath || entries[0].Version != "1.2" || entries[0].Name != "Pocket 3 D-Log M to Rec.709" || entries[0].OutputColorSpace != outputRec709 || entries[0].Purpose != purposeRestore || entries[0].LibraryID != "pocket3-dlogm-v1.2" || entries[0].Format != lutFormatCube3D {
 		t.Fatalf("catalog entry = %#v", entries)
 	}
 	grid, digest, err := verifyCube(entries[0].File, entries[0].Grid, entries[0].SHA256)

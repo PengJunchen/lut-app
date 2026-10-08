@@ -49,6 +49,11 @@
         <button id="input-select-button" class="button path-button" type="button" aria-label="选择原片文件夹">选择文件夹</button>
       </div>
       <p class="field-hint">可粘贴路径，也可打开系统文件夹选择器；默认使用应用所在文件夹。</p>
+      <p id="video-format-hint" class="field-hint format-hint">文件后缀只用于发现候选；即使是 AVC/HEVC、PCM 或 ProRes 流，也须由本机解码器实际读取后才可处理。无法处理或确认的素材会原样保留并标记待确认。</p>
+      <details id="supported-format-details" class="supported-format-details hidden">
+        <summary id="supported-format-count">查看本版本支持的文件后缀</summary>
+        <div id="supported-format-list" class="supported-format-list"></div>
+      </details>
 
       <label class="field-label output-label" for="output-path">结果保存基础目录</label>
       <div class="path-controls">
@@ -84,8 +89,27 @@
 
       <div class="supported" id="supported-luts">
         <span class="supported-icon" aria-hidden="true">✓</span>
-        <div><b>随应用提供的 LUT</b><div id="catalog-list" class="catalog-list">正在读取可用 LUT…</div></div>
+        <div><b>自动还原清单 · Log → Rec.709</b><div id="catalog-list" class="catalog-list">正在读取可用 LUT…</div></div>
       </div>
+
+      <details id="lut-library-panel" class="lut-library-panel">
+        <summary class="lut-library-summary">
+          <span><b>全部已收录 LUT</b><small>浏览版本、格式、用途和适用相机</small></span>
+          <span id="library-count" class="count-badge">0 项</span>
+        </summary>
+        <div class="lut-library-content">
+          <p class="library-note">只有标记为“自动匹配可用”的 Log → Rec.709 LUT 会用于批量还原。创意风格、监看、Linear、HLG、sRGB 等其他用途仅供查看；Normal、HDR、元数据缺失或冲突、没有匹配 LUT 的素材仍会原样保留。</p>
+          <div class="library-search-row">
+            <label for="library-search">搜索 LUT</label>
+            <input id="library-search" type="search" autocomplete="off" placeholder="相机、模式、版本、格式或用途">
+            <span id="library-search-count" class="library-search-count" role="status" aria-live="polite"></span>
+          </div>
+          <div id="library-fallback" class="library-fallback hidden" role="status">此版本没有提供完整资源库；上方自动还原清单仍可使用。</div>
+          <div id="library-empty" class="library-fallback hidden" role="status">当前资源库为空；上方自动还原清单仍可使用。</div>
+          <div id="library-results" class="library-results"></div>
+          <div id="library-no-results" class="library-no-results hidden" role="status">没有符合搜索条件的 LUT。</div>
+        </div>
+      </details>
 
       <div class="action-row">
         <button id="preview-button" class="button primary" type="button"><span aria-hidden="true">⌕</span> 扫描并预览</button>

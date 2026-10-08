@@ -16,7 +16,28 @@ var videoExtensions = map[string]bool{
 	".m4v": true, ".mkv": true, ".mov": true, ".mp2": true, ".mp4": true, ".mpe": true,
 	".mpeg": true, ".mpg": true, ".mts": true, ".mxf": true, ".ogm": true, ".ogv": true,
 	".rm": true, ".rmvb": true, ".ts": true, ".vob": true, ".webm": true, ".wmv": true,
-	".y4m": true,
+	".y4m": true, ".osv": true,
+	".264": true, ".avc": true, ".h264": true, ".265": true, ".h265": true, ".hevc": true,
+}
+
+var rawElementaryVideoExtensions = map[string]bool{
+	".264": true, ".avc": true, ".h264": true, ".265": true, ".h265": true, ".hevc": true,
+}
+
+// SupportedVideoExtensions returns the sorted suffixes used to discover
+// candidate video files. FFprobe still determines whether a candidate is
+// readable and contains a supported video stream.
+func SupportedVideoExtensions() []string {
+	extensions := make([]string, 0, len(videoExtensions))
+	for extension := range videoExtensions {
+		extensions = append(extensions, extension)
+	}
+	sort.Strings(extensions)
+	return extensions
+}
+
+func isRawElementaryVideo(path string) bool {
+	return rawElementaryVideoExtensions[strings.ToLower(filepath.Ext(path))]
 }
 
 var lrfToken = regexp.MustCompile(`(?i)(^|[._-])LRF($|[._-])`)

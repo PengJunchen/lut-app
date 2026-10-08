@@ -34,6 +34,14 @@ Each batch requires a fresh scan before processing. An empty scan cannot be star
 
 When the output base is blank, outputs are written under `Output/Standard/` or `Output/Vivid/`; a selected base directory receives the corresponding style subfolder. Converted video is re-encoded as 10-bit HEVC Rec.709, so the video pixels are not lossless; audio streams are copied. Unmodified footage is copied byte-for-byte. See [Chinese usage instructions](docs/USAGE.zh-CN.md) and [LUT source notes](assets/SOURCES.md) for user workflow and the registered camera/profile/look combinations.
 
+## LUT coverage and format handling
+
+The full library includes current official restoration, creative, HLG, sRGB and Linear conversion assets. The UI shows versions, output spaces and automatic eligibility. Automatic processing only uses a validated 3D Cube restoring the exact camera, Log profile and selected look to Rec.709. Other purposes remain available for reference. See [the official-source audit](docs/DJI_LUT_RESEARCH.zh-CN.md).
+
+Versions are compared within the same camera, input profile, output space and look. A newer D-Log LUT does not replace a D-Log2 LUT. The manifests are pinned snapshots; runtime does not silently download updated LUTs.
+
+Discovery includes MOV, MP4, MKV, MXF, transport streams, raw H.264/H.265 and other extensions shown in the app. An extension does not guarantee an available decoder or usable DJI metadata. Raw H.264/H.265 streams lack a reliable embedded timing/camera contract and remain unchanged for review, as do native OSV panorama, spherical or multiple main video streams. Converted video uses 10-bit HEVC; audio is copied into MP4 when compatible, otherwise MKV. Normal, HDR, unknown and unmatched clips remain byte-for-byte copies.
+
 ## Build from a source checkout
 
 A clean source checkout intentionally contains neither LUT bytes nor FFmpeg binaries. It supports source tests, but the app needs a prepared release build to run.
@@ -53,13 +61,13 @@ A clean source checkout intentionally contains neither LUT bytes nor FFmpeg bina
 
    Use `darwin-amd64` or `windows-amd64` for those packages. The script downloads into ignored `packaging/downloads/`, verifies each archive and executable, and writes a clean local cache with the applicable FFmpeg and Go license files.
 
-4. Prepare LUT files. The five D-Log M `.cube` files have direct DJI download URLs in the catalog and are fetched by the script. For the four Pocket 4P LUTs, download the named files from [DJI's LUT library](https://www.dji.com/lut) into a temporary directory, then import and verify them:
+4. Prepare all LUT files from the pinned official sources in [`assets/library.json`](assets/library.json). The script downloads direct files or the exact listed member of a ZIP, checks both archive and payload hashes, and publishes the complete library atomically:
 
    ```sh
-   python3 packaging/prepare_luts.py --source-dir /path/to/pocket4p-luts
+   python3 packaging/prepare_luts.py
    ```
 
-   Files are installed under ignored `assets/luts/` only after their catalog SHA-256 values match. DJI LUT redistribution rights are not documented here; see [THIRD_PARTY.md](THIRD_PARTY.md) before sharing a built package.
+   Files are installed under ignored `assets/luts/` only after every SHA-256 matches. Superseded files are removed from that managed directory after successful staging. `--source-dir /path/to/luts` optionally imports matching local files without changing them. DJI LUT redistribution rights are not documented here; see [THIRD_PARTY.md](THIRD_PARTY.md) before sharing a built package.
 
 5. Build one or more release targets:
 

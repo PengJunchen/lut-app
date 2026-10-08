@@ -10,6 +10,14 @@ Electron 桌面版在独立窗口中显示现有中文界面，由随包分发�
 
 macOS 桌面版要求 macOS 13 或更高版本，因为 Electron 44 已停止支持 macOS 12。Windows 包面向 Windows 10 x64。macOS 包使用 ad-hoc 签名，没有 Developer ID 证书，也未公证；Windows 包没有商业代码签名。首次启动时，操作系统可能显示来源提示。
 
+## LUT 清单与格式
+
+“自动还原清单”显示当前可自动匹配的机型、Log 模式、风格和 LUT 版本。“全部官方 LUT”可展开并搜索，查看官方还原、创意、HLG、sRGB、Linear 等 LUT 的版本、格式、输出用途与是否参与自动匹配。非 Rec.709 还原用途只供查看，扫描不会自动套用这些 LUT。
+
+版本按同一机型、输入模式、输出色域和风格比较，只保留最新版本。例如 D-Log V2.0 与 D-Log2 V1.0 用于不同输入，仍会同时保留。清单来自构建时锁定的官方来源，不会在运行时自动更新。来源与版本核对见项目的 `assets/SOURCES.md` 和 `docs/DJI_LUT_RESEARCH.zh-CN.md`。
+
+界面显示可发现的视频扩展名，包括 MOV、MP4、MKV、MXF、传输流和裸 H.264/H.265。扩展名只用于发现文件；实际解码和自动处理仍取决于 FFmpeg 能力及 DJI 元数据。裸 H.264/H.265 缺乏可靠的内嵌时间戳和机型元数据约定，因此原样保留并标记待核查；OSV 全景、球面投影或多路主视频也采用相同保留策略。为复制原音频码流，AAC 等兼容音频使用 MP4，PCM 等音频使用 MKV；视频仍按原始分辨率和帧率输出 10-bit HEVC。
+
 ## 从源码启动
 
 需要 Node.js 22.12 或更高版本、Go 1.24 或更高版本和 Python 3.10 或更高版本。Go 常规源码测试不需要下载 FFmpeg 或 LUT 文件。
@@ -24,14 +32,14 @@ npm test
 
 ```sh
 python3 packaging/prepare_runtime.py darwin-arm64
-python3 packaging/prepare_luts.py --source-dir /path/to/pocket4p-luts
+python3 packaging/prepare_luts.py
 npm run build:engine
 npm start
 ```
 
 源码开发首次启动时，Electron 会按本机平台从官方发行源下载对应运行时；发行包已包含 Electron 本体，可离线运行。
 
-把 `darwin-arm64` 替换为 `darwin-amd64` 或 `windows-amd64` 可准备对应平台的运行时。Apple Silicon Mac 上的开发启动应使用 `darwin-arm64`；Intel Mac 使用 `darwin-amd64`。LUT 文件仅需准备一次，脚本会按 catalog 中的 SHA-256 校验后放入被忽略的本地目录。
+把 `darwin-arm64` 替换为 `darwin-amd64` 或 `windows-amd64` 可准备对应平台的运行时。Apple Silicon Mac 上的开发启动应使用 `darwin-arm64`；Intel Mac 使用 `darwin-amd64`。LUT 文件仅需准备一次，脚本按完整 library 中的 SHA-256 校验直接文件或 ZIP 内的指定成员，全部成功后才替换本地 LUT 目录并清除旧版本。可选 --source-dir 导入匹配的已有文件；原目录不会被修改。
 
 ## 构建发行包
 
@@ -40,7 +48,7 @@ npm start
 ```sh
 npm ci
 python3 packaging/prepare_runtime.py darwin-arm64
-python3 packaging/prepare_luts.py --source-dir /path/to/pocket4p-luts
+python3 packaging/prepare_luts.py
 npm run build:desktop -- darwin-arm64
 ```
 

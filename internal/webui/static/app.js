@@ -31,6 +31,10 @@
   let stateRecoveryEnabled = true;
   let pollTimer = null;
   let toastTimer = null;
+  let libraryAssets = [];
+  let libraryCatalog = [];
+  let hasCompleteLibrary = false;
+  let libraryCameraNames = new Map();
 
   history.replaceState(null, '', location.pathname + location.search);
 
@@ -193,23 +197,75 @@
   });
   reconnectButton.addEventListener('click', reconnect);
 
-  function listCatalog(catalog) {
+  function normalizedKey(value) {
+    return text(value).trim().toLowerCase().replace(/[-_ ]/g, '');
+  }
+  function cameraId(camera) {
+    return typeof camera === 'object' && camera !== null ? text(val(camera, 'id', 'ID', 'camera', 'Camera')) : text(camera);
+  }
+  function indexLibraryCameraNames(library) {
+    libraryCameraNames = new Map();
+    const assets = val(library, 'assets', 'Assets');
+    if (!Array.isArray(assets)) return;
+    for (const asset of assets) {
+      const cameras = val(asset, 'cameras', 'Cameras');
+      if (!Array.isArray(cameras)) continue;
+      for (const camera of cameras) {
+        const id = cameraId(camera);
+        const name = typeof camera === 'object' && camera !== null ? text(val(camera, 'name', 'Name', 'title', 'label')) : '';
+        if (id && name) libraryCameraNames.set(normalizedKey(id), name);
+      }
+    }
+  }
+  function listCatalog(catalog, library) {
     const node = $('catalog-list');
-    if (!Array.isArray(catalog) || catalog.length === 0) {
-      node.textContent = '没有读取到 LUT 清单；需确认应用包内容。';
+    const entries = Array.isArray(catalog) ? catalog : [];
+    const assets = val(library, 'assets', 'Assets');
+    const assetById = new Map((Array.isArray(assets) ? assets : []).map((asset) => [text(val(asset, 'id', 'ID')), asset]).filter(([id]) => id));
+    const combos = new Map();
+    const entryByKey = new Map();
+    const addCombo = (camera, profile) => {
+      const cameraKey = text(camera).trim();
+      const profileKey = text(profile).trim();
+      if (!cameraKey || !profileKey) return;
+      combos.set(`${cameraKey}|${profileKey}`, {camera:cameraKey, profile:profileKey});
+    };
+    const keyFor = (camera, profile, look) => `${text(camera).trim()}|${text(profile).trim()}|${text(look).trim()}`;
+    for (const item of entries) {
+      const camera = cameraId(val(item, 'camera', 'Camera'));
+      const profile = text(val(item, 'profile', 'Profile'));
+      const look = text(val(item, 'look', 'Look'));
+      addCombo(camera, profile);
+      if (camera && profile && look && !entryByKey.has(keyFor(camera, profile, look))) entryByKey.set(keyFor(camera, profile, look), item);
+    }
+    if (Array.isArray(assets)) {
+      for (const asset of assets) {
+        if (val(asset, 'automatic', 'Automatic') !== true) continue;
+        const profile = text(val(asset, 'profile', 'Profile'));
+        const cameras = val(asset, 'cameras', 'Cameras');
+        if (!Array.isArray(cameras)) continue;
+        for (const camera of cameras) addCombo(cameraId(camera), profile);
+      }
+    }
+    if (combos.size === 0) {
+      node.textContent = '当前没有可自动匹配的 Log → Rec.709 LUT。';
       return;
     }
-    const keys = new Set(catalog.map((item) => `${text(val(item,'camera'))}|${text(val(item,'profile'))}|${text(val(item,'look'))}`));
-    const cameras = [...new Set(catalog.map((item) => text(val(item,'camera'), '相机')))].sort();
     const supported = [];
-    for (const camera of cameras) {
-      const profiles = [...new Set(catalog.filter((item) => text(val(item,'camera')) === camera).map((item) => text(val(item,'profile'))))].sort();
-      for (const profile of profiles) {
-        const label = `${cameraLabel(camera)} · ${profileLabel(profile)}`;
-        for (const look of ['standard', 'vivid']) {
-          const exists = keys.has(`${camera}|${profile}|${look}`);
-          supported.push(`<span class="catalog-pill${exists ? '' : ' unavailable'}">${esc(label)} · ${look === 'standard' ? `标准${exists ? '' : '不可用'}` : `鲜艳${exists ? '' : '不可用'}`}</span>`);
-        }
+    for (const {camera, profile} of [...combos.values()].sort((a, b) => `${cameraLabel(a.camera)} ${a.profile}`.localeCompare(`${cameraLabel(b.camera)} ${b.profile}`, 'zh-CN'))) {
+      const label = `${cameraLabel(camera)} · ${profileLabel(profile)}`;
+      for (const look of ['standard', 'vivid']) {
+        const item = entryByKey.get(keyFor(camera, profile, look));
+        const asset = item ? assetById.get(text(val(item, 'library_id', 'LibraryID'))) : null;
+        const version = text(val(item, 'version', 'Version')).trim() || (asset ? assetVersionLabel(asset) : '');
+        const file = text(val(item, 'file', 'File', 'lut_file', 'lutFile') || val(asset, 'file', 'File'));
+        const title = text(val(item, 'lut_name', 'LUTName', 'title', 'Title') || val(asset, 'title', 'Title'));
+        const resourceName = title || (file ? baseName(file) : 'LUT');
+        const detail = item
+          ? `${esc(resourceName)}${version ? ` · ${esc(version)}` : ''}`
+          : '当前未提供自动匹配资源';
+        const lookName = lookLabel(look);
+        supported.push(`<span class="catalog-pill${item ? '' : ' unavailable'}"><b>${esc(label)} · ${esc(lookName)}${item ? ' · 可用' : ''}</b><small class="catalog-detail">${detail}</small></span>`);
       }
     }
     node.innerHTML = supported.join('');
@@ -217,17 +273,162 @@
 
   function profileLabel(profile) {
     const key = text(profile).toLowerCase().replace(/[-_ ]/g, '');
-    return key === 'dlog2' ? 'D-Log2' : key === 'dlogm' ? 'D-Log M' : key === 'dlog' ? 'D-Log' : text(profile, '未知模式');
+    const labels = {dlog2:'D-Log2', dlogm:'D-Log M', dlog:'D-Log', rec709:'Rec.709', linear:'线性', other:'其他'};
+    return labels[key] || text(profile, '未知模式');
+  }
+  function lookLabel(look) {
+    const key = text(look).trim().toLowerCase();
+    const labels = {standard:'标准', vivid:'鲜艳', gamma18:'Gamma 1.8', gamma22:'Gamma 2.2'};
+    return labels[key] || text(look, '其他风格');
   }
   function cameraLabel(camera) {
-    const key = text(camera).toLowerCase().replace(/[-_ ]/g, '');
+    const directName = typeof camera === 'object' && camera !== null ? text(val(camera, 'name', 'Name', 'title', 'label')) : '';
+    const id = cameraId(camera);
+    const key = normalizedKey(id);
     const labels = {
       pocket4p:'DJI Osmo Pocket 4P', pocket3:'DJI Osmo Pocket 3', action4:'DJI Osmo Action 4',
       action5pro:'DJI Osmo Action 5 Pro', action6:'DJI Osmo Action 6', mavic3:'DJI Mavic 3',
       mavic2pro:'DJI Mavic 2 Pro', air2s:'DJI Air 2S', air3:'DJI Air 3', air3s:'DJI Air 3S', unknown:'未识别'
     };
-    return labels[key] || text(camera, '未识别');
+    return directName || libraryCameraNames.get(key) || labels[key] || id || '未识别';
   }
+  function outputColorLabel(value) {
+    const labels = {rec709:'Rec.709', 'rec2020-hlg':'Rec.2020 HLG', srgb:'sRGB', dlog:'D-Log', unknown:'未知'};
+    return labels[text(value).toLowerCase()] || '未知';
+  }
+  function purposeLabel(value) {
+    const labels = {restore:'还原转换', creative:'创意风格', gamma_conversion:'伽马转换', monitoring:'监看', unknown:'用途待确认'};
+    return labels[text(value).toLowerCase()] || '用途待确认';
+  }
+  function provenanceLabel(value) {
+    const raw = typeof value === 'object' && value !== null ? text(val(value, 'label', 'name', 'source', 'kind')) : text(value);
+    const key = raw.toLowerCase().replace(/[-_ ]/g, '');
+    if (key === 'supplied' || key === 'usersupplied' || key === 'provided') return '已提供来源';
+    if (key === 'official' || key === 'djiofficial' || key === 'djidownloadcenter') return 'DJI 官方来源';
+    return raw;
+  }
+  function formatLabel(value) {
+    const format = text(value).trim();
+    return format ? format.toUpperCase() : '格式未知';
+  }
+  function gridLabel(value) {
+    if (value === undefined || value === null || value === '') return '';
+    const numeric = Number(value);
+    return Number.isFinite(numeric) && numeric > 0 ? `${numeric}³` : text(value);
+  }
+  function assetVersionLabel(asset) {
+    const version = text(val(asset, 'version', 'Version')).trim();
+    return version || '官方未标版本';
+  }
+  function lutGridLabel(asset) {
+    const rawDimension = val(asset, 'dimension', 'Dimension');
+    const dimension = text(rawDimension).trim().toLowerCase();
+    const type = text(val(asset, 'type', 'Type')).trim().toLowerCase();
+    const isOneDimensional = dimension === '1d' || dimension === '1' || (!dimension && type === '1d');
+    if (isOneDimensional) {
+      const length = text(val(asset, 'lut_1d_size', 'LUT1DSize'));
+      return length ? `1D · 长度 ${length}` : '1D';
+    }
+    const grid = gridLabel(val(asset, 'lut_3d_size', 'LUT3DSize', 'grid', 'Grid'));
+    return grid ? `${grid} 网格` : '';
+  }
+  function lutAssetText(asset) {
+    const file = text(val(asset, 'file', 'File'));
+    const searchableFile = /^sha256-[a-f0-9]{64}\.cube$/i.test(baseName(file)) ? '' : file;
+    const cameras = val(asset, 'cameras', 'Cameras');
+    const cameraNames = Array.isArray(cameras) ? cameras.map(cameraLabel) : [];
+    const fields = [
+      val(asset, 'id', 'ID'), val(asset, 'title', 'Title'), ...cameraNames,
+      ...(Array.isArray(cameras) ? cameras.map(cameraId) : []),
+      val(asset, 'profile', 'Profile'), profileLabel(val(asset, 'profile', 'Profile')),
+      val(asset, 'look', 'Look'), lookLabel(val(asset, 'look', 'Look')),
+      assetVersionLabel(asset), searchableFile, baseName(searchableFile), val(asset, 'format', 'Format'),
+      val(asset, 'dimension', 'Dimension'), val(asset, 'type', 'Type'), lutGridLabel(asset),
+      val(asset, 'lut_1d_size', 'LUT1DSize'), val(asset, 'lut_3d_size', 'LUT3DSize'), val(asset, 'grid', 'Grid'),
+      val(asset, 'output_color_space', 'OutputColorSpace'), outputColorLabel(val(asset, 'output_color_space', 'OutputColorSpace')),
+      val(asset, 'purpose', 'Purpose'), purposeLabel(val(asset, 'purpose', 'Purpose')),
+      provenanceLabel(val(asset, 'provenance', 'Provenance'))
+    ];
+    return fields.map((field) => text(field)).join(' ').toLocaleLowerCase();
+  }
+  function renderLibraryResults() {
+    const results = $('library-results');
+    const empty = $('library-no-results');
+    if (!hasCompleteLibrary || libraryAssets.length === 0) {
+      results.innerHTML = '';
+      empty.classList.add('hidden');
+      $('library-search-count').textContent = '';
+      return;
+    }
+    const query = text($('library-search').value).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    const matches = libraryAssets.filter((asset) => {
+      const searchable = lutAssetText(asset);
+      return query.every((term) => searchable.includes(term));
+    });
+    $('library-search-count').textContent = query.length ? `显示 ${matches.length} / ${libraryAssets.length} 项` : `共 ${libraryAssets.length} 项`;
+    empty.classList.toggle('hidden', matches.length !== 0);
+    results.innerHTML = matches.map((asset) => {
+      const id = text(val(asset, 'id', 'ID'));
+      const file = text(val(asset, 'file', 'File'));
+      const title = text(val(asset, 'title', 'Title'), file ? baseName(file) : '未命名 LUT');
+      const cameras = val(asset, 'cameras', 'Cameras');
+      const cameraNames = Array.isArray(cameras) ? cameras.map(cameraLabel).filter(Boolean) : [];
+      const cameraText = cameraNames.length ? [...new Set(cameraNames)].join('、') : '适用相机待确认';
+      const profile = profileLabel(val(asset, 'profile', 'Profile'));
+      const look = lookLabel(val(asset, 'look', 'Look'));
+      const version = assetVersionLabel(asset);
+      const format = formatLabel(val(asset, 'format', 'Format'));
+      const grid = lutGridLabel(asset);
+      const output = outputColorLabel(val(asset, 'output_color_space', 'OutputColorSpace'));
+      const purpose = purposeLabel(val(asset, 'purpose', 'Purpose'));
+      const provenance = provenanceLabel(val(asset, 'provenance', 'Provenance'));
+      const linked = Boolean(id) && libraryCatalog.some((entry) => text(val(entry, 'library_id', 'LibraryID')) === id);
+      const automatic = val(asset, 'automatic', 'Automatic') === true;
+      const isAvailable = automatic && linked;
+      const statusClass = isAvailable ? 'available' : automatic ? 'unlisted' : 'reference';
+      const status = isAvailable ? '自动匹配可用' : automatic ? '未列入自动清单' : '仅供查看';
+      const hash = text(val(asset, 'sha256', 'SHA256'));
+      const hashLabel = hash ? `<span class="lut-hash" title="SHA-256：${esc(hash)}">SHA-256 ${esc(hash.slice(0, 12))}${hash.length > 12 ? '…' : ''}</span>` : '';
+      const sourceLabel = provenance ? `<span class="lut-source">${esc(provenance)}</span>` : '';
+      const autoLabel = automatic ? '可用于安全自动匹配，但需同时列入当前自动清单' : '不会参与批量自动还原';
+      return `<article class="lut-card"><div class="lut-card-heading"><div><h3>${esc(title)}</h3><p>${esc(cameraText)} · ${esc(profile)} · ${esc(look)}</p></div><span class="lut-availability ${statusClass}" title="${esc(autoLabel)}">${esc(status)}</span></div><div class="lut-card-meta"><span>版本 ${esc(version)}</span><span>格式 ${esc(format)}${grid ? ` · ${esc(grid)}` : ''}</span><span>输出 ${esc(output)}</span><span>用途 ${esc(purpose)}</span></div><div class="lut-card-footer"><span class="lut-file">${esc(file ? baseName(file) : '文件名未提供')}</span>${sourceLabel}${hashLabel}</div></article>`;
+    }).join('');
+  }
+  function listLibrary(library, catalog) {
+    const assets = val(library, 'assets', 'Assets');
+    hasCompleteLibrary = Array.isArray(assets);
+    libraryAssets = hasCompleteLibrary ? assets : [];
+    libraryCatalog = Array.isArray(catalog) ? catalog : [];
+    $('library-count').textContent = hasCompleteLibrary ? `${libraryAssets.length} 项` : '暂不可用';
+    $('library-fallback').classList.toggle('hidden', hasCompleteLibrary);
+    $('library-empty').classList.toggle('hidden', !hasCompleteLibrary || libraryAssets.length > 0);
+    $('library-search').disabled = !hasCompleteLibrary || libraryAssets.length === 0;
+    renderLibraryResults();
+  }
+  function renderSupportedFormats(extensions) {
+    const details = $('supported-format-details');
+    const list = $('supported-format-list');
+    const supported = Array.isArray(extensions) ? [...new Set(extensions.map((extension) => text(extension).trim()).filter(Boolean))] : [];
+    if (supported.length === 0) {
+      details.classList.add('hidden');
+      $('video-format-hint').textContent = '文件后缀只用于发现候选；即使是 AVC/HEVC、PCM 或 ProRes 流，也须由本机解码器实际读取后才可处理。无法处理或确认的素材会原样保留并标记待确认。';
+      list.innerHTML = '';
+      return;
+    }
+    $('video-format-hint').textContent = `此版本会扫描 ${supported.length} 种列出的文件后缀。后缀只用于发现候选；即使是 AVC/HEVC、PCM 或 ProRes 流，也须由本机解码器实际读取后才可处理。无法处理或确认的素材会原样保留并标记待确认。`;
+    $('supported-format-count').textContent = `查看 ${supported.length} 种支持扫描的文件后缀`;
+    list.innerHTML = supported.map((extension) => `<span>${esc(extension.toUpperCase())}</span>`).join('');
+    details.classList.remove('hidden');
+  }
+  function renderBootstrapResources(bootstrap) {
+    const library = val(bootstrap, 'library', 'Library');
+    const catalog = val(bootstrap, 'catalog', 'Catalog') || [];
+    indexLibraryCameraNames(library);
+    listCatalog(catalog, library);
+    listLibrary(library, catalog);
+    renderSupportedFormats(val(bootstrap, 'supported_video_extensions', 'SupportedVideoExtensions'));
+  }
+  $('library-search').addEventListener('input', renderLibraryResults);
   function modeLabel(item) {
     const gamma = text(val(item, 'source_gamma', 'gamma', 'Gamma')).trim();
     if (/d[- ]?log\s*m/i.test(gamma)) return 'D-Log M';
@@ -270,30 +471,38 @@
     if (status.includes('run') || status === 'started') return 'running';
     return 'done';
   }
+  function lutDisplayName(item) {
+    const title = text(val(item, 'lut_name', 'lutName', 'LUTName'));
+    const file = text(val(item, 'lut_file', 'lutFile', 'LUTFile', 'file', 'File'));
+    const name = title || (file ? baseName(file) : '');
+    const version = text(val(item, 'lut_version', 'lutVersion', 'LUTVersion', 'version', 'Version'));
+    if (name && version) return `${name} · ${version}`;
+    return name || version;
+  }
   function lutName(item) {
-    const name = text(val(item, 'lut_file', 'lutFile', 'LUTFile'));
-    if (name) return baseName(name);
+    const name = lutDisplayName(item);
+    if (name) return name;
     const reason = text(val(item, 'reason', 'Reason'));
     if (/no LUT configured/i.test(reason)) return /look=vivid/i.test(reason) ? '无对应鲜艳 LUT' : '无对应标准 LUT';
     if (/vivid|鲜艳/i.test(reason) && /missing|not available|unavailable|缺少|没有|不可用/i.test(reason)) return '无对应 Vivid LUT';
     return '未使用 LUT';
   }
   function runLutName(item) {
-    const name = text(val(item, 'lut_file', 'lutFile', 'LUTFile'));
+    const name = lutDisplayName(item);
     const status = text(val(item, 'status', 'Status')).toLowerCase();
-    if (status === 'encoded') return `已应用：${name ? baseName(name) : 'LUT 信息缺失'}`;
+    if (status === 'encoded') return `已应用：${name || 'LUT 信息缺失'}`;
     if (status === 'skipped_existing') {
-      if (val(item, 'output_verified', 'OutputVerified')) return name ? `已验证已有结果：${baseName(name)}` : '已验证已有结果：未使用 LUT';
-      return name ? `未验证 · 候选：${baseName(name)}` : '已有输出 · LUT 未验证';
+      if (val(item, 'output_verified', 'OutputVerified')) return name ? `已验证已有结果：${name}` : '已验证已有结果：未使用 LUT';
+      return name ? `未验证 · 候选：${name}` : '已有输出 · LUT 未验证';
     }
-    if (name) return `未应用 · 候选：${baseName(name)}`;
+    if (name) return `未应用 · 候选：${name}`;
     return '未使用 LUT';
   }
   function previewLutName(item) {
-    const name = text(val(item, 'lut_file', 'lutFile', 'LUTFile'));
+    const name = lutDisplayName(item);
     const action = text(val(item, 'action', 'Action')).toLowerCase();
-    if ((action === 'encode' || text(val(item, 'status', 'Status')).toLowerCase() === 'planned_encode') && name) return `将使用：${baseName(name)}`;
-    if (name) return `未应用 · 候选：${baseName(name)}`;
+    if ((action === 'encode' || text(val(item, 'status', 'Status')).toLowerCase() === 'planned_encode') && name) return `将使用：${name}`;
+    if (name) return `未应用 · 候选：${name}`;
     return lutName(item);
   }
   function reasonText(item, preview = false) {
@@ -481,7 +690,7 @@
     try {
       const boot = await api('/api/bootstrap');
       if (shuttingDown) return;
-      listCatalog(val(boot,'catalog','Catalog') || []);
+      renderBootstrapResources(boot);
       if (stateRecoveryEnabled) await refreshState({recover:true});
       if (connected && !shuttingDown) {
         $('footer-status').textContent = processing ? '正在处理文件…' : '本机服务已就绪';
@@ -663,7 +872,7 @@
       const choice = document.querySelector(`input[name="look"][value="${look === 'vivid' ? 'vivid' : 'standard'}"]`);
       if (choice) choice.checked = true;
       $('recursive').checked = Boolean(val(defaults,'recursive','Recursive'));
-      listCatalog(val(boot,'catalog','Catalog') || []);
+      renderBootstrapResources(boot);
       updateOutputDestination();
       $('footer-status').textContent = isDesktop ? '桌面应用已就绪' : '本机服务已就绪';
       await refreshState({recover:true});

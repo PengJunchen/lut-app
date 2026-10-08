@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const engineVersion = "1.0.0"
+const engineVersion = "2.2.0"
 
 // Run plans and processes the configured folder. Per-file failures are
 // recorded in the report and do not stop other files. Cancel by cancelling ctx.
@@ -203,7 +203,8 @@ func reportFromPlan(file filePlan) ItemReport {
 		Input: file.relative, Output: file.public.Output,
 		Action: file.public.Action, Status: file.public.Status,
 		Profile: file.public.Profile, Camera: file.public.Camera,
-		LUTFile: file.public.LUTFile, LUTSHA256: file.public.LUTSHA256,
+		LUTFile: file.public.LUTFile, LUTName: file.public.LUTName,
+		LUTVersion: file.public.LUTVersion, LUTSHA256: file.public.LUTSHA256,
 		SourceGamma: file.public.Gamma, Encoder: file.public.Encoder,
 		Reason: file.public.Reason, InputBytes: file.public.Bytes,
 		DurationSeconds: file.duration,
@@ -715,6 +716,7 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 	for ordinal, audio := range audioStreams(file.probe) {
 		command = append(command, fmt.Sprintf("-map_metadata:s:a:%d", ordinal), fmt.Sprintf("0:s:%d", audio.Index))
 	}
+	container := strings.ToLower(filepath.Ext(file.output))
 	if encoder == EncoderVideoToolbox {
 		bitrate := sourceBitrate(file.video)
 		if bitrate == "" {
@@ -726,16 +728,31 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 			value := int64(clamp(pixels*fps*.1, 8e6, 160e6))
 			bitrate = strconv.FormatInt(value, 10)
 		}
-		command = append(command, "-c:v", "hevc_videotoolbox", "-pix_fmt", "p010le", "-profile:v", "main10", "-b:v", bitrate, "-tag:v", "hvc1")
+		command = append(command, "-c:v", "hevc_videotoolbox", "-pix_fmt", "p010le", "-profile:v", "main10", "-b:v", bitrate)
 	} else {
-		command = append(command, "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-profile:v", "main10", "-crf", strconv.Itoa(cfg.crf), "-preset", cfg.preset, "-tag:v", "hvc1")
+		command = append(command, "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-profile:v", "main10", "-crf", strconv.Itoa(cfg.crf), "-preset", cfg.preset)
+		command = append(command, "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited")
 	}
 	command = append(command,
 		"-metadata", gammaTag+"=Rec.709", "-metadata", "source_gamma="+file.gamma,
 		"-metadata:s:v:0", gammaTag+"=Rec.709", "-metadata:s:v:0", "source_gamma="+file.gamma,
 		"-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
-		"-metadata:s:v:0", "rotate=", "-movflags", "+faststart+use_metadata_tags", temp,
+		"-metadata:s:v:0", "rotate=",
 	)
+	if container != ".mkv" {
+		command = append(command, "-tag:v", "hvc1", "-movflags", "+faststart+use_metadata_tags")
+	} else {
+		// Matroska keeps these color declarations as stream tags as well as in
+		// the HEVC VUI. ffprobe currently exposes the tags but may report its
+		// color_primaries/color_transfer fields as unknown for Matroska.
+		command = append(command,
+			"-metadata:s:v:0", "COLOR_RANGE=tv",
+			"-metadata:s:v:0", "COLOR_SPACE=bt709",
+			"-metadata:s:v:0", "COLOR_PRIMARIES=bt709",
+			"-metadata:s:v:0", "COLOR_TRANSFER=bt709",
+		)
+	}
+	command = append(command, temp)
 	return command
 }
 
@@ -785,13 +802,30 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 	if err != nil {
 		return item, err
 	}
+	filterFile := file
+	if file.lut != nil {
+		normalizedLUT, normalizeErr := normalizeCubeForFFmpeg(file.lut.File, file.lut.Grid, file.lut.SHA256)
+		if normalizeErr != nil {
+			return item, fmt.Errorf("prepare LUT for FFmpeg: %w", normalizeErr)
+		}
+		if normalizedLUT != "" {
+			defer os.Remove(normalizedLUT)
+			lutCopy := *file.lut
+			lutCopy.File = normalizedLUT
+			filterFile.lut = &lutCopy
+		}
+	}
 	initialEncoder := encoder
 	var fallbackReason string
 	var outputProbe Probe
 	var tempName string
 	var outputHash string
 	for attempt := 0; attempt < 2; attempt++ {
-		temp, tempErr := os.CreateTemp(filepath.Dir(file.output), "."+filepath.Base(file.output)+".*.partial.mp4")
+		extension := filepath.Ext(file.output)
+		if extension == "" {
+			extension = ".mp4"
+		}
+		temp, tempErr := os.CreateTemp(filepath.Dir(file.output), "."+filepath.Base(file.output)+".*.partial"+extension)
 		if tempErr != nil {
 			return item, fmt.Errorf("create temporary output: %w", tempErr)
 		}
@@ -800,13 +834,31 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 			os.Remove(tempName)
 			return item, closeErr
 		}
-		command := buildFFmpegCommand(cfg, file, tempName, encoder)
+		command := buildFFmpegCommand(cfg, filterFile, tempName, encoder)
 		logRel := filepath.Join("logs", filepath.FromSlash(file.relative)+".ffmpeg.log")
 		logPath := filepath.Join(cfg.outputRoot, logRel)
 		item.LogFile = filepath.ToSlash(logRel)
 		stderrTail, encodeErr := runFFmpeg(ctx, command, file.duration, progress, logPath)
 		if encodeErr == nil {
-			outputProbe, encodeErr = probeFile(ctx, tempName, cfg.ffprobe)
+			if strings.EqualFold(filepath.Ext(file.output), ".mkv") {
+				var sourcePackets Probe
+				sourcePackets, encodeErr = probeFileWithPacketCounts(ctx, file.source, cfg.ffprobe, true)
+				if encodeErr == nil {
+					outputProbe, encodeErr = probeFileWithPacketCounts(ctx, tempName, cfg.ffprobe, true)
+				}
+				if encodeErr == nil {
+					if problems := validateMkvPacketCounts(sourcePackets, outputProbe); len(problems) > 0 {
+						encodeErr = fmt.Errorf("Matroska packet-count validation failed: %s", strings.Join(problems, "; "))
+					}
+				}
+			} else {
+				outputProbe, encodeErr = probeFile(ctx, tempName, cfg.ffprobe)
+			}
+		}
+		if encodeErr == nil {
+			if problems := validateColorMetadata(ctx, tempName, cfg.ffprobe, outputProbe); len(problems) > 0 {
+				encodeErr = fmt.Errorf("output color metadata validation failed: %s", strings.Join(problems, "; "))
+			}
 		}
 		if encodeErr == nil {
 			if problems := validateEncoded(file, outputProbe, encoder); len(problems) > 0 {
@@ -891,21 +943,11 @@ func validateEncoded(plan filePlan, output Probe, encoder EncoderMode) []string 
 	if video.PixelFormat != "yuv420p10le" {
 		problems = append(problems, fmt.Sprintf("output pixel format %q; expected yuv420p10le", video.PixelFormat))
 	}
-	for field, actual := range map[string]string{
-		"color_range": video.ColorRange, "color_space": video.ColorSpace,
-		"color_primaries": video.ColorPrimaries, "color_transfer": video.ColorTransfer,
-	} {
-		want := "bt709"
-		if field == "color_range" {
-			want = "tv"
-		}
-		if !strings.EqualFold(actual, want) {
-			problems = append(problems, fmt.Sprintf("output %s %q; expected %s", field, actual, want))
-		}
-	}
 	if expected, err := strconv.ParseInt(plan.video.NbFrames, 10, 64); err == nil && expected > 0 {
 		actual, parseErr := strconv.ParseInt(video.NbFrames, 10, 64)
-		if parseErr != nil || actual != expected {
+		if parseErr == nil && actual != expected {
+			problems = append(problems, fmt.Sprintf("output frame count %q; expected %d", video.NbFrames, expected))
+		} else if parseErr != nil && !strings.EqualFold(filepath.Ext(plan.output), ".mkv") {
 			problems = append(problems, fmt.Sprintf("output frame count %q; expected %d", video.NbFrames, expected))
 		}
 	}
@@ -932,7 +974,7 @@ func validateEncoded(plan filePlan, output Probe, encoder EncoderMode) []string 
 		if sourceStream.CodecName != outputStream.CodecName || sourceStream.SampleRate != outputStream.SampleRate || sourceStream.Channels != outputStream.Channels {
 			problems = append(problems, fmt.Sprintf("audio stream %d codec/rate/channels changed", i))
 		}
-		if sourceStream.ChannelLayout != "" && !strings.EqualFold(sourceStream.ChannelLayout, outputStream.ChannelLayout) {
+		if sourceStream.ChannelLayout != "" && outputStream.ChannelLayout != "" && !strings.EqualFold(sourceStream.ChannelLayout, outputStream.ChannelLayout) {
 			problems = append(problems, fmt.Sprintf("audio stream %d channel layout changed", i))
 		}
 		sourceAudioDuration := streamDuration(sourceStream, plan.probe)
@@ -947,11 +989,14 @@ func validateEncoded(plan filePlan, output Probe, encoder EncoderMode) []string 
 			}
 		}
 	}
+	if !strings.EqualFold(video.CodecName, "hevc") {
+		problems = append(problems, fmt.Sprintf("output video codec %q; expected HEVC", video.CodecName))
+	}
 	if values := metadataValues(output, gammaTag); len(values) == 0 {
 		problems = append(problems, "output DJI gamma tag is missing")
 	} else {
 		for _, value := range values {
-			if value != "Rec.709" {
+			if !strings.EqualFold(value, "Rec.709") {
 				problems = append(problems, "output DJI gamma tag is not Rec.709")
 				break
 			}
@@ -959,6 +1004,93 @@ func validateEncoded(plan filePlan, output Probe, encoder EncoderMode) []string 
 	}
 	_ = encoder
 	return problems
+}
+
+func validateColorMetadata(ctx context.Context, path, ffprobe string, output Probe) []string {
+	video, err := mainVideo(output)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	type colorField struct {
+		name, actual, tag, expected string
+	}
+	fields := []colorField{
+		{name: "color_range", actual: video.ColorRange, tag: "COLOR_RANGE", expected: "tv"},
+		{name: "color_space", actual: video.ColorSpace, tag: "COLOR_SPACE", expected: "bt709"},
+		{name: "color_primaries", actual: video.ColorPrimaries, tag: "COLOR_PRIMARIES", expected: "bt709"},
+		{name: "color_transfer", actual: video.ColorTransfer, tag: "COLOR_TRANSFER", expected: "bt709"},
+	}
+	var problems []string
+	needsFrameProbe := false
+	isMatroska := strings.EqualFold(filepath.Ext(path), ".mkv")
+	for _, field := range fields {
+		actual := strings.TrimSpace(field.actual)
+		if strings.EqualFold(actual, "unknown") {
+			actual = ""
+		}
+		if actual == "" {
+			needsFrameProbe = true
+		} else if !strings.EqualFold(actual, field.expected) {
+			problems = append(problems, fmt.Sprintf("output %s %q; expected %s", field.name, actual, field.expected))
+		}
+		if isMatroska {
+			tag := tagValue(video.Tags, field.tag)
+			if tag == "" {
+				problems = append(problems, fmt.Sprintf("Matroska %s tag is missing", field.tag))
+			} else if !strings.EqualFold(tag, field.expected) {
+				problems = append(problems, fmt.Sprintf("Matroska %s tag %q; expected %s", field.tag, tag, field.expected))
+			}
+		}
+	}
+	if !needsFrameProbe {
+		return problems
+	}
+	frames, probeErr := probeDecodedFrameColors(ctx, path, ffprobe)
+	if probeErr != nil {
+		return append(problems, probeErr.Error())
+	}
+	if len(frames) == 0 {
+		return append(problems, "decoded-frame color metadata is unavailable")
+	}
+	for index, frame := range frames {
+		frameValues := []struct {
+			name, actual, expected string
+		}{
+			{"color_range", frame.ColorRange, "tv"},
+			{"color_space", frame.ColorSpace, "bt709"},
+			{"color_primaries", frame.ColorPrimaries, "bt709"},
+			{"color_transfer", frame.ColorTransfer, "bt709"},
+		}
+		for _, value := range frameValues {
+			if !strings.EqualFold(strings.TrimSpace(value.actual), value.expected) {
+				problems = append(problems, fmt.Sprintf("decoded frame %d %s %q; expected %s", index, value.name, value.actual, value.expected))
+			}
+		}
+	}
+	return problems
+}
+
+func validateMkvPacketCounts(source, output Probe) []string {
+	sourceVideo, sourceErr := mainVideo(source)
+	outputVideo, outputErr := mainVideo(output)
+	if sourceErr != nil || outputErr != nil {
+		if sourceErr != nil {
+			return []string{"source " + sourceErr.Error()}
+		}
+		return []string{"output " + outputErr.Error()}
+	}
+	expected, sourceParseErr := strconv.ParseInt(sourceVideo.NbReadPackets, 10, 64)
+	actual, outputParseErr := strconv.ParseInt(outputVideo.NbReadPackets, 10, 64)
+	if sourceParseErr != nil || expected < 1 {
+		return []string{fmt.Sprintf("source video packet count %q is unavailable", sourceVideo.NbReadPackets)}
+	}
+	if outputParseErr != nil || actual < 1 {
+		return []string{fmt.Sprintf("output video packet count %q is unavailable", outputVideo.NbReadPackets)}
+	}
+	if actual != expected {
+		return []string{fmt.Sprintf("output video packet count %d; expected %d", actual, expected)}
+	}
+	return nil
 }
 
 func audioStreams(probe Probe) []Stream {

@@ -45,6 +45,7 @@ module.exports = {
     { from: "docs/ELECTRON.zh-CN.md", to: "USAGE.zh-CN.md" },
     { from: "assets/SOURCES.md", to: "assets/SOURCES.md" },
     { from: "assets/catalog.json", to: "assets/catalog.json" },
+    { from: "assets/library.json", to: "assets/library.json" },
     { from: "packaging/runtime-lock.json", to: "packaging/runtime-lock.json" },
     { from: "packaging/license-lock.json", to: "packaging/license-lock.json" },
   ],

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"dji-lut-app/assets"
 	"dji-lut-app/internal/engine"
 	"dji-lut-app/internal/folderpicker"
 )
@@ -110,8 +112,70 @@ func (a *application) Bootstrap() any {
 			"look":      a.defaultLook,
 			"recursive": a.defaultRecursive,
 		},
-		"catalog": a.catalog,
+		"catalog":                    a.catalog,
+		"library":                    loadLibrary(assets.FS),
+		"supported_video_extensions": engine.SupportedVideoExtensions(),
 	}
+}
+
+func loadLibrary(source fs.ReadFileFS) any {
+	const fallback = `{"schema":1,"assets":[],"cameras":[]}`
+	raw, err := source.ReadFile("library.json")
+	if err != nil {
+		return decodeLibrary([]byte(fallback))
+	}
+	if library := decodeLibrary(raw); library != nil {
+		return library
+	}
+	return decodeLibrary([]byte(fallback))
+}
+
+func decodeLibrary(raw []byte) map[string]any {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil || envelope == nil {
+		return nil
+	}
+	var shape struct {
+		Schema int               `json:"schema"`
+		Assets []json.RawMessage `json:"assets"`
+	}
+	if err := json.Unmarshal(raw, &shape); err != nil || shape.Schema != 1 || shape.Assets == nil {
+		return nil
+	}
+	if cameraData, ok := envelope["cameras"]; ok && !validLibraryCameras(cameraData) {
+		return nil
+	}
+	for _, asset := range shape.Assets {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal(asset, &object); err != nil || object == nil {
+			return nil
+		}
+		if cameraData, ok := object["cameras"]; ok && !validLibraryCameras(cameraData) {
+			return nil
+		}
+	}
+	var library map[string]any
+	if err := json.Unmarshal(raw, &library); err != nil || library == nil {
+		return nil
+	}
+	return library
+}
+
+func validLibraryCameras(raw json.RawMessage) bool {
+	var cameras []json.RawMessage
+	if err := json.Unmarshal(raw, &cameras); err != nil || cameras == nil {
+		return false
+	}
+	for _, camera := range cameras {
+		var object struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(camera, &object); err != nil || strings.TrimSpace(object.ID) == "" || strings.TrimSpace(object.Name) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *application) Preview(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -334,7 +398,7 @@ func (a *application) onEvent(event engine.Event) {
 		a.appendLogLocked("正在处理：" + event.Path)
 	case "item_completed":
 		if event.Item != nil {
-			a.appendLogLocked(fmt.Sprintf("%s：%s（%s）", statusText(event.Item.Status), event.Path, selectedLUT(event.Item.LUTFile)))
+			a.appendLogLocked(fmt.Sprintf("%s：%s（%s）", statusText(event.Item.Status), event.Path, displaySelectedLUT(*event.Item)))
 		} else {
 			a.appendLogLocked("文件处理结束：" + event.Path)
 		}
@@ -579,6 +643,7 @@ func makeStateItems(items []engine.ItemPlan, pending bool) []stateItem {
 		result = append(result, stateItem{ItemReport: engine.ItemReport{
 			Input: item.Input, Output: item.Output, Action: item.Action, Status: status,
 			Profile: item.Profile, Camera: item.Camera, LUTFile: item.LUTFile,
+			LUTName: item.LUTName, LUTVersion: item.LUTVersion,
 			LUTSHA256: item.LUTSHA256, SourceGamma: item.Gamma, Encoder: item.Encoder,
 			Reason: item.Reason, InputBytes: item.Bytes,
 		}})
@@ -677,4 +742,18 @@ func selectedLUT(path string) string {
 		return "未使用 LUT"
 	}
 	return filepath.Base(path)
+}
+
+func displaySelectedLUT(item engine.ItemReport) string {
+	name := strings.TrimSpace(item.LUTName)
+	if name == "" {
+		name = selectedLUT(item.LUTFile)
+	}
+	if name == "未使用 LUT" {
+		return name
+	}
+	if version := strings.TrimSpace(item.LUTVersion); version != "" {
+		return fmt.Sprintf("%s · v%s", name, version)
+	}
+	return name
 }

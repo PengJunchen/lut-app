@@ -7,9 +7,10 @@ import (
 	"io/fs"
 )
 
-//go:embed luts/*.cube
+//go:embed all:luts
 var lutFiles embed.FS
 
 // LUTFS is nil in ordinary development/test builds. Release builds embed the
-// locally prepared LUT files after their hashes have been checked.
+// complete, verified library payload tree, including formats not used by the
+// automatic Rec.709 catalog.
 var LUTFS fs.FS = lutFiles

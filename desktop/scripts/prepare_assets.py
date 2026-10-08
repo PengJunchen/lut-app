@@ -40,8 +40,8 @@ def main() -> None:
 
     # These helpers verify the exact locked FFmpeg runtime and catalogued LUT
     # payloads before the Go `bundled` build embeds them in the sidecar.
-    packaging.archive_runtime(target)
     packaging.verify_luts()
+    packaging.archive_runtime(target)
 
     generated = ROOT / "desktop" / ".generated" / target
     licenses = generated / "licenses"

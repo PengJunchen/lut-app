@@ -2,7 +2,7 @@ package engine
 
 import "time"
 
-// Look selects the intended Rec.709 LUT style.
+// Look selects the intended restoration style.
 type Look string
 
 const (
@@ -40,14 +40,21 @@ type Config struct {
 	Preset        string      `json:"preset,omitempty"`
 }
 
-// LUTSpec is a single camera/profile/look mapping from manifest.json.
+// LUTSpec is a single camera/profile/look/output mapping from manifest.json.
+// The automatic engine currently accepts only Rec.709 restore 3D .cube files.
 type LUTSpec struct {
-	Camera  string `json:"camera"`
-	Profile string `json:"profile"`
-	Look    Look   `json:"look"`
-	File    string `json:"file"`
-	SHA256  string `json:"sha256"`
-	Grid    int    `json:"grid"`
+	Camera           string `json:"camera"`
+	Profile          string `json:"profile"`
+	Look             Look   `json:"look"`
+	File             string `json:"file"`
+	SHA256           string `json:"sha256"`
+	Grid             int    `json:"grid"`
+	Version          string `json:"version,omitempty"`
+	OutputColorSpace string `json:"output_color_space,omitempty"`
+	Purpose          string `json:"purpose,omitempty"`
+	LibraryID        string `json:"library_id,omitempty"`
+	Name             string `json:"title,omitempty"`
+	Format           string `json:"format,omitempty"`
 }
 
 // Plan is a side-effect-free preview of a batch. Input and output paths on
@@ -61,18 +68,20 @@ type Plan struct {
 
 // ItemPlan is the engine's decision for one video.
 type ItemPlan struct {
-	Input     string `json:"input"`
-	Output    string `json:"output"`
-	Action    string `json:"action"`
-	Status    string `json:"status"`
-	Profile   string `json:"profile,omitempty"`
-	Camera    string `json:"camera,omitempty"`
-	LUTFile   string `json:"lut_file,omitempty"`
-	LUTSHA256 string `json:"lut_sha256,omitempty"`
-	Gamma     string `json:"source_gamma,omitempty"`
-	Encoder   string `json:"encoder,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	Bytes     int64  `json:"bytes"`
+	Input      string `json:"input"`
+	Output     string `json:"output"`
+	Action     string `json:"action"`
+	Status     string `json:"status"`
+	Profile    string `json:"profile,omitempty"`
+	Camera     string `json:"camera,omitempty"`
+	LUTFile    string `json:"lut_file,omitempty"`
+	LUTName    string `json:"lut_name,omitempty"`
+	LUTVersion string `json:"lut_version,omitempty"`
+	LUTSHA256  string `json:"lut_sha256,omitempty"`
+	Gamma      string `json:"source_gamma,omitempty"`
+	Encoder    string `json:"encoder,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Bytes      int64  `json:"bytes"`
 }
 
 // Event is emitted by Run. Percent is progress for Path; OverallPercent is
@@ -97,6 +106,8 @@ type ItemReport struct {
 	Profile         string  `json:"profile,omitempty"`
 	Camera          string  `json:"camera,omitempty"`
 	LUTFile         string  `json:"lut_file,omitempty"`
+	LUTName         string  `json:"lut_name,omitempty"`
+	LUTVersion      string  `json:"lut_version,omitempty"`
 	LUTSHA256       string  `json:"lut_sha256,omitempty"`
 	SourceGamma     string  `json:"source_gamma,omitempty"`
 	Encoder         string  `json:"encoder,omitempty"`
