@@ -2,6 +2,14 @@
 
 本文件记录面向社区的版本变更。项目源码中的历史开发版本号不代表已公开发行版本；公开 RC 使用下方 `0.0.1-rc.0` 记录。
 
+## 未发布 / Unreleased
+
+- 页面支持中文与 English 即时切换，覆盖分步和经典模式、预览、进度、资源清单与已知诊断；有效预览与当前批次不会因语言切换重置。
+- Electron 记住本机语言偏好，并同步原生菜单、窗口标题、目录选择和报告导出提示。浏览器模式使用当前来源的本地语言偏好。
+- 新增 [English README](README.en.md) 和[本地化维护说明](docs/LOCALIZATION.md)，与中文文档保持能力、下载版本和许可边界一致。
+
+These changes are available in source builds. The published `rc0.0.1` packages still use the Chinese interface; the release tag and downloads have not been replaced.
+
 ## [0.0.1-rc.0] — 2026-10-08 — 首个公开候选版本
 
 Git tag：`rc0.0.1`。GitHub Release 显示标题：`DJI LUT 0.0.1-rc.0`。

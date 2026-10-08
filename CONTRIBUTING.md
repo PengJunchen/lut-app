@@ -12,7 +12,7 @@ npm ci
 npm test
 ```
 
-`go test ./...` 不需要下载 FFmpeg 或 `.cube` 资源。`npm test` 是 Electron 桥接层的 Node.js 测试，需要先安装锁定依赖。完整桌面构建步骤见 [`docs/ELECTRON.zh-CN.md`](docs/ELECTRON.zh-CN.md)。
+`go test ./...` 不需要下载 FFmpeg 或 `.cube` 资源。`npm test` 检查 Electron 桥接层与界面本地化行为，需要先安装锁定依赖。完整桌面构建步骤见 [`docs/ELECTRON.zh-CN.md`](docs/ELECTRON.zh-CN.md)。
 
 开发运行和发行构建使用独立资源准备步骤：
 
@@ -44,6 +44,7 @@ LUT 清单的价值在于来源明确、匹配条件可复核。请仅使用可�
 
 ## 提交代码与文档
 
+- 页面与原生菜单的新文案应同时提供中文和英文，README 的两种语言也应保持事实一致。翻译不能改变路径、机型、LUT 标识或处理报告；具体维护步骤见[本地化说明 / Localization](docs/LOCALIZATION.md)。
 - 修改 Go 代码后运行 `gofmt`，并增加能验证行为的测试。
 - Electron IPC、Go 本机 API、路径处理、子进程生命周期和打包配置都属于安全边界；请描述输入校验、权限和失败关闭方式。
 - 行为改动请说明复现步骤、预期结果和验证平台。清楚区分目标平台交叉构建与在该操作系统上的实际运行验证。

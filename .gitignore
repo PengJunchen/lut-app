@@ -157,3 +157,8 @@ venv/
 !/docs/images/**
 !/assets/icons/
 !/assets/icons/**
+
+# Local promotional assets are delivered separately and must not be published.
+/docs/images/posters/
+/docs/marketing/
+/Marketing/

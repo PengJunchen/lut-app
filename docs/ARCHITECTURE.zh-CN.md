@@ -42,6 +42,16 @@ Electron 桌面版由 Electron 主进程启动随包提供的 Go 引擎子进程
 
 输出位于所选基础目录下的 `Standard/` 或 `Vivid/`；未指定目录时使用原片目录下的 `Output/`。批次报告记录匹配决定、状态、原因、资源版本以及输入/输出摘要。报告也可能含完整本机路径与文件名，分享前需脱敏。
 
+## 界面语言与偏好
+
+`internal/webui/static/i18n.js` 定义 `zh-CN` 和 `en` 的页面文案；`app.js` 根据当前语言渲染静态标签、预览、处理状态和已知错误。翻译仅作用于显示内容，机型标识、LUT 官方名称、文件路径、匹配条件和导出报告保持原值。切换语言重新渲染当前界面，不使有效预览过期，也不重新发送扫描或处理请求。
+
+Go 浏览器模式先读取有效的 `localStorage` 偏好，再按浏览器语言选择。Electron 在页面初始化前通过受限 IPC 提供 `GET /api/desktop-preferences`；`POST /api/desktop-language` 仅接受 `{ "language": "zh-CN" }` 或 `{ "language": "en" }`。这两个路由由 Electron 主进程处理，不转发到 Go，也不属于 Go HTTP API。它们与其他桌面路由共用主窗口、主 frame、回环来源和请求体校验。
+
+`desktop/lib/preferences.cjs` 负责读取和顺序原子写入 `userData/preferences.json`，只保存语言字段；`desktop/lib/native-i18n.cjs` 管理窗口、菜单、应用提示和系统对话框中应用提供的文案。语言偏好不属于媒体处理配置，目录、风格和递归设置继续独立验证。Go 浏览器模式的目录选择请求可携带白名单语言，原生选择器通过固定脚本的参数或环境变量获取提示文字，不拼接用户输入为脚本代码。
+
+维护翻译的方法与验证边界见[本地化说明](LOCALIZATION.md)。
+
 ## LUT 数据模型
 
 清单与二进制资源分开维护：
