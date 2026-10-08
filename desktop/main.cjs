@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, screen, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { ApiClient } = require('./lib/api-client.cjs');
@@ -151,12 +151,15 @@ function installRequestHandler() {
 }
 
 function createMainWindow() {
+  const available = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(1120, available.width);
+  const height = Math.min(820, available.height);
   mainWindow = new BrowserWindow({
     title: WINDOW_TITLE,
-    width: 1320,
-    height: 900,
-    minWidth: 960,
-    minHeight: 680,
+    width,
+    height,
+    minWidth: Math.min(960, width),
+    minHeight: Math.min(680, height),
     show: false,
     backgroundColor: '#f4f7fb',
     autoHideMenuBar: false,

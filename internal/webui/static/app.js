@@ -33,8 +33,32 @@
   let toastTimer = null;
   let libraryAssets = [];
   let libraryCatalog = [];
+  let catalogEntries = [];
   let hasCompleteLibrary = false;
   let libraryCameraNames = new Map();
+  const ROW_PAGE_SIZE = 5;
+  const LIBRARY_PAGE_SIZE = 4;
+  const CATALOG_PAGE_SIZE = 12;
+  const MODE_PREFERENCE_KEY = 'dji-lut-interface-mode';
+  let interfaceMode = (() => {
+    try { return window.localStorage.getItem(MODE_PREFERENCE_KEY) === 'classic' ? 'classic' : 'guided'; }
+    catch (_) { return 'guided'; }
+  })();
+  let guidedStep = 'settings';
+  let previewPageAvailable = false;
+  let progressPageAvailable = false;
+  let previewItems = [];
+  let progressItems = [];
+  let previewPage = 0;
+  let progressPage = 0;
+  let libraryPage = 0;
+  let catalogPage = 0;
+  let previewPageCount = 1;
+  let progressPageCount = 1;
+  let libraryPageCount = 1;
+  let catalogPageCount = 1;
+  let terminalResultPresented = false;
+  const dialogOpener = new WeakMap();
 
   history.replaceState(null, '', location.pathname + location.search);
 
@@ -142,6 +166,18 @@
     $('new-batch-button').disabled = busy;
     $('header-close-button').disabled = shuttingDown || exportPending;
     $('close-button').disabled = shuttingDown || exportPending;
+    $('mode-toggle').disabled = shuttingDown;
+    $('lut-open-button').disabled = shuttingDown;
+    $('guided-back-button').disabled = processing || Boolean(activeOperation) || shuttingDown || (guidedStep === 'result' && !previewPageAvailable);
+    $('guided-continue-preview-button').disabled = processing || Boolean(activeOperation) || batchLocked || !hasReusablePreview();
+    $('preview-page-prev').disabled = previewPage <= 0;
+    $('preview-page-next').disabled = previewPage >= previewPageCount - 1;
+    $('progress-page-prev').disabled = progressPage <= 0;
+    $('progress-page-next').disabled = progressPage >= progressPageCount - 1;
+    $('library-page-prev').disabled = libraryPage <= 0;
+    $('library-page-next').disabled = libraryPage >= libraryPageCount - 1;
+    $('catalog-page-prev').disabled = catalogPage <= 0;
+    $('catalog-page-next').disabled = catalogPage >= catalogPageCount - 1;
   };
   const beginOperation = (name) => {
     activeOperation = name;
@@ -175,6 +211,89 @@
   const updateOutputDestination = () => {
     $('output-destination').textContent = `最终目的地：${finalOutputDestination()}`;
   };
+  function pageCount(items, size) {
+    return Math.max(1, Math.ceil((items || []).length / size));
+  }
+  function hasReusablePreview() {
+    return Boolean(previewSnapshot) && JSON.stringify(settings()) === previewSnapshot;
+  }
+  function saveInterfaceMode() {
+    try { window.localStorage.setItem(MODE_PREFERENCE_KEY, interfaceMode); }
+    catch (_) { /* Interface mode is an optional preference. */ }
+  }
+  function updateGuidedPage() {
+    const guided = interfaceMode === 'guided';
+    const nav = $('guided-nav');
+    const settingsSection = $('settings-section');
+    const previewSection = $('preview-section');
+    const progressSection = $('progress-section');
+    const primaryActionRow = $('primary-action-row');
+
+    document.body.classList.toggle('guided-mode', guided);
+    document.body.dataset.interfaceMode = interfaceMode;
+    $('mode-toggle').textContent = guided ? '经典模式' : '分步模式';
+    $('mode-toggle').setAttribute('aria-label', guided ? '切换到经典模式' : '切换到分步模式');
+    $('mode-toggle').title = guided ? '切换到经典模式' : '切换到分步模式';
+    nav.classList.toggle('hidden', !guided);
+
+    if (!guided) {
+      settingsSection.classList.remove('hidden');
+      previewSection.classList.toggle('hidden', !previewPageAvailable);
+      progressSection.classList.toggle('hidden', !progressPageAvailable);
+      $('settings-action-host').appendChild(primaryActionRow);
+      $('run-button').classList.remove('guided-hidden');
+      return;
+    }
+
+    settingsSection.classList.toggle('hidden', guidedStep !== 'settings');
+    previewSection.classList.toggle('hidden', guidedStep !== 'preview' || !previewPageAvailable);
+    progressSection.classList.toggle('hidden', !['processing', 'result'].includes(guidedStep) || !progressPageAvailable);
+    if (guidedStep === 'preview' && previewPageAvailable) $('preview-action-host').appendChild(primaryActionRow);
+    else $('settings-action-host').appendChild(primaryActionRow);
+
+    const stepKey = guidedStep === 'settings' ? 'settings' : guidedStep === 'preview' ? 'preview' : 'processing';
+    for (const step of document.querySelectorAll('[data-guided-step]')) {
+      if (step.dataset.guidedStep === stepKey) step.setAttribute('aria-current', 'step');
+      else step.removeAttribute('aria-current');
+    }
+    const status = {
+      settings: '第 1 步：选择素材',
+      preview: '第 2 步：扫描预览',
+      processing: '第 3 步：正在处理',
+      result: '第 3 步：处理结果'
+    };
+    $('guided-page-status').textContent = status[guidedStep] || status.settings;
+
+    const canReturn = (guidedStep === 'preview' && previewPageAvailable) || (guidedStep === 'result' && progressPageAvailable);
+    $('guided-back-button').classList.toggle('hidden', !canReturn);
+    $('guided-back-button').textContent = guidedStep === 'result'
+      ? '回看预览'
+      : batchLocked ? '返回处理结果' : '返回设置';
+    const canResumePreview = guidedStep === 'settings' && !batchLocked && hasReusablePreview();
+    $('guided-continue-preview-button').classList.toggle('hidden', !canResumePreview);
+    $('run-button').classList.toggle('guided-hidden', guidedStep !== 'preview');
+  }
+  function setGuidedStep(step) {
+    if (guidedStep === step) return;
+    guidedStep = step;
+    updateGuidedPage();
+  }
+  function openAppDialog(dialog, opener = document.activeElement) {
+    if (!dialog) return;
+    dialogOpener.set(dialog, opener);
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    const closeButton = dialog.querySelector('.dialog-close-button');
+    if (closeButton) closeButton.focus();
+  }
+  function restoreDialogFocus(dialog, fallback) {
+    dialog.addEventListener('close', () => {
+      const opener = dialogOpener.get(dialog);
+      dialogOpener.delete(dialog);
+      if (opener && opener.isConnected && !opener.disabled) opener.focus();
+      else fallback.focus();
+    });
+  }
   const invalidatePreview = () => {
     updateOutputDestination();
     if (previewSnapshot && JSON.stringify(settings()) !== previewSnapshot) {
@@ -182,6 +301,8 @@
       previewSnapshot = '';
       $('preview-stale').classList.remove('hidden');
       showMessage('设置已改变，旧预览已失效；请重新扫描并预览。');
+      if (guidedStep === 'preview') guidedStep = 'settings';
+      updateGuidedPage();
       syncControls();
     }
   };
@@ -217,8 +338,27 @@
       }
     }
   }
-  function listCatalog(catalog, library) {
+  function renderCatalogPage() {
     const node = $('catalog-list');
+    catalogPageCount = pageCount(catalogEntries, CATALOG_PAGE_SIZE);
+    catalogPage = Math.max(0, Math.min(catalogPage, catalogPageCount - 1));
+    $('catalog-count').textContent = catalogEntries.length ? `${catalogEntries.length} 个组合` : '暂不可用';
+    if (!catalogEntries.length) {
+      node.textContent = '当前没有可自动匹配的 Log → Rec.709 LUT。';
+      $('catalog-page-status').textContent = '';
+      $('catalog-pagination').classList.add('hidden');
+    } else {
+      const start = catalogPage * CATALOG_PAGE_SIZE;
+      const visibleEntries = catalogEntries.slice(start, start + CATALOG_PAGE_SIZE);
+      const end = Math.min(catalogEntries.length, start + visibleEntries.length);
+      node.innerHTML = visibleEntries.join('');
+      $('catalog-page-status').textContent = `第 ${catalogPage + 1} / ${catalogPageCount} 页 · ${start + 1}–${end} 项`;
+      $('catalog-pagination').classList.toggle('hidden', catalogEntries.length <= CATALOG_PAGE_SIZE);
+    }
+    $('catalog-page-prev').disabled = catalogPage <= 0;
+    $('catalog-page-next').disabled = catalogPage >= catalogPageCount - 1;
+  }
+  function listCatalog(catalog, library) {
     const entries = Array.isArray(catalog) ? catalog : [];
     const assets = val(library, 'assets', 'Assets');
     const assetById = new Map((Array.isArray(assets) ? assets : []).map((asset) => [text(val(asset, 'id', 'ID')), asset]).filter(([id]) => id));
@@ -248,7 +388,9 @@
       }
     }
     if (combos.size === 0) {
-      node.textContent = '当前没有可自动匹配的 Log → Rec.709 LUT。';
+      catalogEntries = [];
+      catalogPage = 0;
+      renderCatalogPage();
       return;
     }
     const supported = [];
@@ -268,7 +410,9 @@
         supported.push(`<span class="catalog-pill${item ? '' : ' unavailable'}"><b>${esc(label)} · ${esc(lookName)}${item ? ' · 可用' : ''}</b><small class="catalog-detail">${detail}</small></span>`);
       }
     }
-    node.innerHTML = supported.join('');
+    catalogEntries = supported;
+    catalogPage = 0;
+    renderCatalogPage();
   }
 
   function profileLabel(profile) {
@@ -358,6 +502,10 @@
       results.innerHTML = '';
       empty.classList.add('hidden');
       $('library-search-count').textContent = '';
+      $('library-pagination').classList.add('hidden');
+      $('library-page-status').textContent = '';
+      libraryPage = 0;
+      libraryPageCount = 1;
       return;
     }
     const query = text($('library-search').value).trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -365,9 +513,18 @@
       const searchable = lutAssetText(asset);
       return query.every((term) => searchable.includes(term));
     });
-    $('library-search-count').textContent = query.length ? `显示 ${matches.length} / ${libraryAssets.length} 项` : `共 ${libraryAssets.length} 项`;
+    libraryPageCount = pageCount(matches, LIBRARY_PAGE_SIZE);
+    libraryPage = Math.max(0, Math.min(libraryPage, libraryPageCount - 1));
+    const start = libraryPage * LIBRARY_PAGE_SIZE;
+    const visibleMatches = matches.slice(start, start + LIBRARY_PAGE_SIZE);
+    const end = Math.min(matches.length, start + visibleMatches.length);
+    $('library-search-count').textContent = query.length ? `显示 ${matches.length} / ${libraryAssets.length} 项` : `共 ${matches.length} 项`;
+    $('library-page-status').textContent = matches.length ? `第 ${libraryPage + 1} / ${libraryPageCount} 页 · ${start + 1}–${end} 项` : '无结果';
+    $('library-pagination').classList.toggle('hidden', matches.length <= LIBRARY_PAGE_SIZE);
+    $('library-page-prev').disabled = libraryPage <= 0;
+    $('library-page-next').disabled = libraryPage >= libraryPageCount - 1;
     empty.classList.toggle('hidden', matches.length !== 0);
-    results.innerHTML = matches.map((asset) => {
+    results.innerHTML = visibleMatches.map((asset) => {
       const id = text(val(asset, 'id', 'ID'));
       const file = text(val(asset, 'file', 'File'));
       const title = text(val(asset, 'title', 'Title'), file ? baseName(file) : '未命名 LUT');
@@ -399,6 +556,7 @@
     hasCompleteLibrary = Array.isArray(assets);
     libraryAssets = hasCompleteLibrary ? assets : [];
     libraryCatalog = Array.isArray(catalog) ? catalog : [];
+    libraryPage = 0;
     $('library-count').textContent = hasCompleteLibrary ? `${libraryAssets.length} 项` : '暂不可用';
     $('library-fallback').classList.toggle('hidden', hasCompleteLibrary);
     $('library-empty').classList.toggle('hidden', !hasCompleteLibrary || libraryAssets.length > 0);
@@ -428,7 +586,10 @@
     listLibrary(library, catalog);
     renderSupportedFormats(val(bootstrap, 'supported_video_extensions', 'SupportedVideoExtensions'));
   }
-  $('library-search').addEventListener('input', renderLibraryResults);
+  $('library-search').addEventListener('input', () => {
+    libraryPage = 0;
+    renderLibraryResults();
+  });
   function modeLabel(item) {
     const gamma = text(val(item, 'source_gamma', 'gamma', 'Gamma')).trim();
     if (/d[- ]?log\s*m/i.test(gamma)) return 'D-Log M';
@@ -533,19 +694,61 @@
     if (/color_(range|space).*copied for review/i.test(reason)) return `视频色彩范围或矩阵信息不完整；${reviewOutcome}`;
     return reason;
   }
-  function itemRow(item, preview) {
+  function detailButton(item, preview, index) {
+    const source = preview ? 'preview' : 'progress';
+    const fileName = baseName(val(item, 'input', 'Input'));
+    return `<button class="row-detail-button" type="button" data-detail-source="${source}" data-detail-index="${index}" aria-haspopup="dialog" aria-label="查看 ${esc(fileName)} 的详细信息">详情</button>`;
+  }
+  function itemRow(item, preview, index) {
     const input = text(val(item, 'input', 'Input'));
     const mode = modeLabel(item);
     const camera = cameraLabel(val(item, 'camera', 'Camera'));
     const rawReason = text(val(item, 'reason', 'Reason'));
     const reason = reasonText(item, preview);
     const percent = Math.max(0, Math.min(100, Number(val(item, 'percent', 'Percent')) || 0));
-    const file = `<span class="file-name">${esc(baseName(input))}</span><span class="path-sub">${esc(input)}</span>`;
+    const file = `<span class="file-name" title="${esc(baseName(input))}">${esc(baseName(input))}</span><span class="path-sub" title="${esc(input)}">${esc(input)}</span>`;
     const modeCell = `<span class="mode-tag ${modeClass(item)}">${esc(mode)}</span>`;
     if (preview) {
-      return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(previewLutName(item))}</span></td><td>${esc(actionLabel(item, true))}</td><td title="${esc(rawReason)}">${esc(reason)}</td></tr>`;
+      return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(previewLutName(item))}</span></td><td>${esc(actionLabel(item, true))}</td><td title="${esc(rawReason || reason)}"><div class="row-detail-line"><span class="row-summary-reason">${esc(reason)}</span>${detailButton(item, true, index)}</div></td></tr>`;
     }
-    return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(runLutName(item))}</span></td><td><span class="status-tag ${statusClass(item)}">${esc(statusLabel(item))}</span></td><td class="progress-cell"><progress class="mini-progress" max="100" value="${percent}" aria-label="${esc(baseName(input))}进度"></progress>${percent ? `${Math.round(percent)}%` : '—'}</td><td title="${esc(rawReason)}">${esc(text(val(item,'error','Error'), reason))}</td></tr>`;
+    const progressReason = text(val(item, 'error', 'Error'), reason);
+    return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(runLutName(item))}</span></td><td><span class="status-tag ${statusClass(item)}">${esc(statusLabel(item))}</span></td><td class="progress-cell"><progress class="mini-progress" max="100" value="${percent}" aria-label="${esc(baseName(input))}进度"></progress>${percent ? `${Math.round(percent)}%` : '—'}</td><td title="${esc(rawReason || progressReason)}"><div class="row-detail-line"><span class="row-summary-reason">${esc(progressReason)}</span>${detailButton(item, false, index)}</div></td></tr>`;
+  }
+  function detailValue(value) {
+    if (Array.isArray(value)) return value.map((entry) => text(entry)).join('、');
+    if (value && typeof value === 'object') return JSON.stringify(value, null, 2);
+    return text(value);
+  }
+  function showItemDetails(item, preview, opener) {
+    if (!item) return;
+    const input = text(val(item, 'input', 'Input'));
+    const rawReason = text(val(item, 'reason', 'Reason'));
+    const reason = reasonText(item, preview);
+    const details = [
+      ['文件', input],
+      ['相机', cameraLabel(val(item, 'camera', 'Camera'))],
+      ['拍摄模式', modeLabel(item)],
+      ['源 Gamma', val(item, 'source_gamma', 'SourceGamma', 'gamma', 'Gamma')],
+      ['识别 Profile', val(item, 'profile', 'Profile')],
+      [preview ? '计划操作' : '处理状态', preview ? actionLabel(item, true) : statusLabel(item)],
+      [preview ? '计划 LUT' : 'LUT 结果 / 候选', preview ? previewLutName(item) : runLutName(item)],
+      ['LUT 文件', val(item, 'lut_file', 'LUTFile')],
+      ['LUT 版本', val(item, 'lut_version', 'LUTVersion')],
+      ['LUT SHA-256', val(item, 'lut_sha256', 'LUTSHA256')],
+      ['编码器', val(item, 'encoder', 'Encoder')],
+      ['说明', reason],
+      ['原始说明', rawReason && rawReason !== reason ? rawReason : undefined],
+      ['错误', val(item, 'error', 'Error')],
+      ['结果文件', val(item, 'output', 'Output', 'output_path', 'OutputPath')],
+      ['已有结果核验', val(item, 'output_verified', 'OutputVerified') === true ? '已验证' : undefined],
+      ['输入 SHA-256', val(item, 'input_sha256', 'InputSHA256')],
+      ['结果 SHA-256', val(item, 'output_sha256', 'OutputSHA256')],
+      ['源视频元数据', val(item, 'source_metadata', 'SourceMetadata')],
+      ['当前进度', val(item, 'percent', 'Percent') === undefined ? undefined : `${Math.round(Number(val(item, 'percent', 'Percent')) || 0)}%`]
+    ].filter(([, value]) => value !== undefined && value !== '');
+    $('file-detail-title').textContent = baseName(input) || '视频详情';
+    $('file-detail-content').innerHTML = `<dl>${details.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(detailValue(value))}</dd>`).join('')}</dl>`;
+    openAppDialog($('file-detail-dialog'), opener);
   }
   function willEncode(item) {
     const action = text(val(item, 'action', 'Action')).toLowerCase();
@@ -556,8 +759,35 @@
     const status = text(val(item, 'status', 'Status')).toLowerCase();
     return Boolean(val(item, 'needs_review', 'NeedsReview')) || status.includes('review');
   }
+  function updateVideoPager(prefix, items, page, totalPages) {
+    $(`${prefix}-page-status`).textContent = `第 ${page + 1} / ${totalPages} 页 · ${items.length} 个视频`;
+    $(`${prefix}-pagination`).classList.toggle('hidden', items.length <= ROW_PAGE_SIZE);
+    $(`${prefix}-page-prev`).disabled = page <= 0;
+    $(`${prefix}-page-next`).disabled = page >= totalPages - 1;
+  }
+  function renderPreviewPage() {
+    previewPageCount = pageCount(previewItems, ROW_PAGE_SIZE);
+    previewPage = Math.max(0, Math.min(previewPage, previewPageCount - 1));
+    const start = previewPage * ROW_PAGE_SIZE;
+    $('preview-rows').innerHTML = previewItems.slice(start, start + ROW_PAGE_SIZE)
+      .map((item, offset) => itemRow(item, true, start + offset)).join('');
+    $('preview-table-wrap').classList.toggle('hidden', previewItems.length === 0);
+    $('preview-empty').classList.toggle('hidden', previewItems.length > 0);
+    updateVideoPager('preview', previewItems, previewPage, previewPageCount);
+  }
+  function renderProgressPage() {
+    progressPageCount = pageCount(progressItems, ROW_PAGE_SIZE);
+    progressPage = Math.max(0, Math.min(progressPage, progressPageCount - 1));
+    const start = progressPage * ROW_PAGE_SIZE;
+    $('progress-rows').innerHTML = progressItems.slice(start, start + ROW_PAGE_SIZE)
+      .map((item, offset) => itemRow(item, false, start + offset)).join('');
+    $('progress-table-wrap').classList.toggle('hidden', progressItems.length === 0);
+    $('progress-empty').classList.toggle('hidden', progressItems.length > 0);
+    updateVideoPager('progress', progressItems, progressPage, progressPageCount);
+  }
   function renderPlan(plan) {
-    const items = val(plan, 'items', 'Items') || [];
+    const candidateItems = val(plan, 'items', 'Items');
+    const items = Array.isArray(candidateItems) ? candidateItems : [];
     const input = text(val(plan, 'input_root', 'inputRoot', 'InputRoot'), settings().input);
     const output = text(val(plan, 'output_root', 'outputRoot', 'OutputRoot'), finalOutputDestination());
     const look = text(val(plan, 'look', 'Look'), settings().look);
@@ -565,39 +795,56 @@
     const restoreCount = items.filter(willEncode).length;
     const copyCount = Math.max(0, items.length - restoreCount);
     const reviewCount = items.filter((item) => !willEncode(item) && needsReview(item)).length;
-    $('run-settings').innerHTML = `<span class="setting-chip">原片：${esc(input)}</span><span class="setting-chip">最终保存位置：${esc(output)}</span><span class="setting-chip">风格：${look === 'vivid' ? '鲜艳' : '标准'}</span><span class="setting-chip">子目录：${recursive ? '包含' : '不包含'}</span>`;
+    $('run-settings').innerHTML = `<span class="setting-chip" title="原片：${esc(input)}">原片：${esc(input)}</span><span class="setting-chip" title="最终保存位置：${esc(output)}">最终保存位置：${esc(output)}</span><span class="setting-chip">风格：${look === 'vivid' ? '鲜艳' : '标准'}</span><span class="setting-chip">子目录：${recursive ? '包含' : '不包含'}</span>`;
     $('preview-count').textContent = `${items.length} 个视频`;
     $('preview-restore-count').textContent = restoreCount;
     $('preview-copy-count').textContent = copyCount;
     $('preview-review-count').textContent = reviewCount;
-    $('preview-rows').innerHTML = items.map((item) => itemRow(item, true)).join('');
-    $('preview-empty').classList.toggle('hidden', items.length > 0);
-    $('preview-rows').parentElement.classList.toggle('hidden', items.length === 0);
+    previewItems = items;
+    previewPage = 0;
+    previewPageAvailable = true;
+    renderPreviewPage();
     $('preview-stale').classList.add('hidden');
     $('preview-section').classList.remove('hidden');
     hasPreview = items.length > 0;
     previewSnapshot = JSON.stringify(settings());
     if (!hasPreview) showMessage('没有找到可处理的视频；请检查路径或扫描选项。');
+    setGuidedStep('preview');
     syncControls();
-    $('preview-section').scrollIntoView({behavior:'smooth', block:'start'});
+    if (interfaceMode === 'classic') $('preview-section').scrollIntoView({behavior:'smooth', block:'start'});
   }
 
   function summaryCard(label, value, cls = '') {
     return `<div class="summary-card ${cls}"><span>${esc(label)}</span><b>${Number(value) || 0}</b></div>`;
   }
   function renderState(state) {
-    currentState = state;
     const running = Boolean(val(state, 'running', 'Running'));
     const finished = Boolean(val(state, 'finished', 'done', 'Finished', 'Done'));
     const cancelled = Boolean(val(state, 'cancelled', 'Cancelled'));
+    const stateError = val(state, 'error', 'Error');
+    const terminal = !running && (finished || cancelled || Boolean(stateError));
+    if (batchLocked && running) return;
+    currentState = state;
     processing = running;
-    batchLocked = !running && (finished || cancelled || Boolean(val(state,'error','Error')));
+    batchLocked = terminal;
+    if (running) setGuidedStep('processing');
+    else if (terminal && !terminalResultPresented) {
+      terminalResultPresented = true;
+      setGuidedStep('result');
+    }
     const summary = val(state, 'summary', 'Summary') || {};
-    const items = val(state, 'items', 'Items') || [];
+    const stateItems = val(state, 'items', 'Items');
+    const plan = val(state, 'plan', 'Plan') || {};
+    const planItems = val(plan, 'items', 'Items');
+    const currentItems = Array.isArray(stateItems) ? stateItems : [];
+    const items = currentItems.length || !Array.isArray(planItems) ? currentItems : planItems;
+    progressItems = items;
+    progressPage = Math.max(0, Math.min(progressPage, pageCount(progressItems, ROW_PAGE_SIZE) - 1));
+    progressPageAvailable = true;
+    updateGuidedPage();
     const completed = Number(val(state, 'completed', 'Completed')) || 0;
     const total = Number(val(state, 'total', 'Total')) || items.length;
     const currentPercent = Number(val(state, 'percent', 'Percent', 'overall_percent', 'overallPercent')) || (total ? completed / total * 100 : 0);
-    $('progress-section').classList.remove('hidden');
     $('progress-title').textContent = running ? '正在还原' : finished ? '批次已结束' : '处理状态';
     const stateBadge = $('run-state');
     stateBadge.className = `state-badge ${running ? 'running' : cancelled ? 'cancelled' : finished ? 'complete' : 'running'}`;
@@ -612,12 +859,11 @@
       summaryCard('已跳过', val(summary,'skipped','Skipped')),
       summaryCard('失败', val(summary,'failed','Failed'), 'failed')
     ].join('');
-    $('progress-rows').innerHTML = items.map((item) => itemRow(item, false)).join('');
-    if (!items.length && val(state, 'plan', 'Plan')) $('progress-rows').innerHTML = (val(val(state,'plan','Plan'),'items','Items') || []).map((item) => itemRow(item,false)).join('');
+    renderProgressPage();
     const logs = val(state, 'logs', 'Logs') || [];
     $('log-list').innerHTML = logs.map((entry) => `<div class="log-entry">${esc(typeof entry === 'string' ? entry : text(val(entry,'message','Message')))}</div>`).join('');
     $('cancel-button').disabled = !running || !connected;
-    if (finished || cancelled || (!running && val(state,'error','Error'))) {
+    if (terminal) {
       $('complete-actions').classList.remove('hidden');
       const encodedCount = Number(val(summary,'encoded','Encoded')) || 0;
       const copiedCount = Number(val(summary,'copied','Copied')) || 0;
@@ -625,7 +871,7 @@
       const failedCount = Number(val(summary,'failed','Failed')) || 0;
       const counts = `套用 LUT ${encodedCount} 个，复制 ${copiedCount} 个，待确认 ${reviewCount} 个，失败 ${failedCount} 个。`;
       const ending = cancelled ? '任务已取消。' : failedCount ? '批次结束，部分文件失败。' : reviewCount ? '批次结束，仍有文件待确认。' : '批次处理完成。';
-      const completeMessage = text(val(state,'error','Error'), `${ending}${counts}`);
+      const completeMessage = text(stateError, `${ending}${counts}`);
       $('complete-message').textContent = completeMessage;
       if (!shuttingDown && activeOperation !== 'picker') showMessage(completeMessage);
       if (connected) $('footer-status').textContent = cancelled ? '任务已取消' : '处理已结束';
@@ -635,6 +881,9 @@
       if (connected) $('footer-status').textContent = running ? '正在处理文件…' : '本机服务已就绪';
     }
     syncControls();
+  }
+  function ensureStatePolling() {
+    if (!pollTimer) pollTimer = setInterval(refreshState, 900);
   }
   async function refreshState({recover = false} = {}) {
     const version = batchVersion;
@@ -646,7 +895,8 @@
       const terminal = Boolean(val(state, 'cancelled', 'Cancelled')) || Boolean(val(state, 'error', 'Error'));
       if (!running && !finished && !terminal) return;
       renderState(state);
-      if (!running && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      if (running && !batchLocked) ensureStatePolling();
+      else if (!running && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     } catch (error) {
       if (!shuttingDown && activeOperation !== 'picker') showMessage(error.message);
       if (pollTimer && !processing) { clearInterval(pollTimer); pollTimer = null; }
@@ -710,8 +960,13 @@
     stateRecoveryEnabled = false;
     hasPreview = false;
     previewSnapshot = '';
+    previewItems = [];
+    previewPage = 0;
+    previewPageAvailable = false;
+    renderPreviewPage();
     $('preview-stale').classList.add('hidden');
     $('preview-section').classList.add('hidden');
+    setGuidedStep('settings');
     beginOperation('preview');
     showMessage('正在扫描和读取视频元数据…');
     try {
@@ -731,16 +986,17 @@
     if (operationBusy() || batchLocked || !connected || !hasPreview) return;
     if (JSON.stringify(settings()) !== previewSnapshot) { invalidatePreview(); return; }
     beginOperation('starting');
+    terminalResultPresented = false;
     stateRecoveryEnabled = true;
     showMessage('正在启动还原任务…');
     try {
       const state = await api('/api/run', {method:'POST', body:JSON.stringify(settings())});
       if (shuttingDown) return;
-      $('progress-section').classList.remove('hidden');
       renderState(state);
-      if (!pollTimer && processing) pollTimer = setInterval(refreshState, 900);
-      $('progress-section').scrollIntoView({behavior:'smooth', block:'start'});
+      if (processing) ensureStatePolling();
+      if (interfaceMode === 'classic') $('progress-section').scrollIntoView({behavior:'smooth', block:'start'});
     } catch (error) {
+      if (!shuttingDown && !processing && !batchLocked) setGuidedStep('preview');
       if (!shuttingDown) { showMessage(error.message); toast(error.message); }
     } finally {
       endOperation('starting');
@@ -757,6 +1013,14 @@
     batchLocked = false;
     hasPreview = false;
     previewSnapshot = '';
+    previewItems = [];
+    progressItems = [];
+    previewPage = 0;
+    progressPage = 0;
+    previewPageAvailable = false;
+    progressPageAvailable = false;
+    terminalResultPresented = false;
+    guidedStep = 'settings';
     $('preview-section').classList.add('hidden');
     $('progress-section').classList.add('hidden');
     $('complete-actions').classList.add('hidden');
@@ -765,7 +1029,10 @@
     $('progress-rows').innerHTML = '';
     $('summary-grid').innerHTML = '';
     $('log-list').innerHTML = '';
+    renderPreviewPage();
+    renderProgressPage();
     showMessage('新批次已开始；请先扫描并预览，再开始还原。');
+    updateGuidedPage();
     syncControls();
     window.scrollTo({top:0, behavior:'smooth'});
   });
@@ -849,6 +1116,51 @@
   }
   $('close-button').addEventListener('click', closeApplication);
   $('header-close-button').addEventListener('click', closeApplication);
+
+  $('mode-toggle').addEventListener('click', () => {
+    interfaceMode = interfaceMode === 'guided' ? 'classic' : 'guided';
+    saveInterfaceMode();
+    updateGuidedPage();
+    syncControls();
+  });
+  $('guided-back-button').addEventListener('click', () => {
+    if (processing || activeOperation || shuttingDown) return;
+    if (guidedStep === 'result' && previewPageAvailable) setGuidedStep('preview');
+    else if (guidedStep === 'preview') setGuidedStep(batchLocked ? 'result' : 'settings');
+  });
+  $('guided-continue-preview-button').addEventListener('click', () => {
+    if (processing || activeOperation || batchLocked || !hasReusablePreview()) return;
+    setGuidedStep('preview');
+    $('preview-section').scrollTop = 0;
+  });
+  $('preview-page-prev').addEventListener('click', () => { previewPage--; renderPreviewPage(); syncControls(); });
+  $('preview-page-next').addEventListener('click', () => { previewPage++; renderPreviewPage(); syncControls(); });
+  $('progress-page-prev').addEventListener('click', () => { progressPage--; renderProgressPage(); syncControls(); });
+  $('progress-page-next').addEventListener('click', () => { progressPage++; renderProgressPage(); syncControls(); });
+  $('library-page-prev').addEventListener('click', () => { libraryPage--; renderLibraryResults(); syncControls(); });
+  $('library-page-next').addEventListener('click', () => { libraryPage++; renderLibraryResults(); syncControls(); });
+  $('catalog-page-prev').addEventListener('click', () => { catalogPage--; renderCatalogPage(); syncControls(); });
+  $('catalog-page-next').addEventListener('click', () => { catalogPage++; renderCatalogPage(); syncControls(); });
+  document.addEventListener('click', (event) => {
+    const button = event.target.closest?.('[data-detail-source][data-detail-index]');
+    if (!button) return;
+    const index = Number(button.dataset.detailIndex);
+    const preview = button.dataset.detailSource === 'preview';
+    showItemDetails((preview ? previewItems : progressItems)[index], preview, button);
+  });
+  const lutDialog = $('lut-dialog');
+  const fileDetailDialog = $('file-detail-dialog');
+  restoreDialogFocus(lutDialog, $('mode-toggle'));
+  restoreDialogFocus(fileDetailDialog, $('mode-toggle'));
+  $('lut-open-button').addEventListener('click', (event) => openAppDialog(lutDialog, event.currentTarget));
+  $('lut-dialog-close').addEventListener('click', () => lutDialog.close());
+  $('file-detail-close').addEventListener('click', () => fileDetailDialog.close());
+  for (const dialog of [lutDialog, fileDetailDialog]) {
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+  }
+  updateGuidedPage();
 
   (async () => {
     syncControls();

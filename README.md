@@ -6,6 +6,8 @@ DJI LUT identifies DJI Log footage and restores it with a matching DJI 3D LUT. T
 
 The Electron package includes the Go engine with its selected LUTs, FFmpeg, FFprobe, and license notices. Users do not need Node.js, Go, Python, FFmpeg, or network access at runtime. The app defaults to the folder containing the installed app; users can select a different source folder in the native folder picker. Outputs remain under `Output/Standard/` or `Output/Vivid/` unless a different output base is selected.
 
+The interface defaults to a guided workflow: choose files, review the plan, then process and inspect results. The top-bar mode switch retains the classic layout without resetting the batch. LUT resources are opened on demand; file lists are paginated and details remain available for each file. Returning to settings preserves the plan until a setting changes, while an active batch keeps its settings locked.
+
 | Target | Minimum system | Archive |
 | --- | --- | --- |
 | macOS arm64 | macOS 13 | `DJI-LUT-macOS-AppleSilicon.zip` |

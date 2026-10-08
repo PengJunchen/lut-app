@@ -16,6 +16,8 @@
       <p id="app-mode-hint">本机处理 · 原片保持不变</p>
     </div>
     <div class="top-spacer"></div>
+    <button id="mode-toggle" class="button quiet mode-toggle" type="button" aria-label="切换到经典模式">经典模式</button>
+    <button id="lut-open-button" class="button quiet resource-open-button" type="button" aria-haspopup="dialog" aria-controls="lut-dialog">查看 LUT</button>
     <span id="connection" class="connection" role="status" aria-live="polite"><i></i> 本机服务已连接</span>
     <button id="reconnect-button" class="button quiet reconnect-button hidden" type="button">重新连接</button>
     <button id="header-close-button" class="button quiet header-close" type="button">关闭应用</button>
@@ -31,7 +33,20 @@
       <div class="intro-icon" aria-hidden="true">◉</div>
     </section>
 
-    <section class="panel settings" aria-labelledby="settings-title">
+    <nav id="guided-nav" class="guided-nav hidden" aria-label="分步流程">
+      <ol class="guided-steps">
+        <li data-guided-step="settings" aria-current="step"><span>1</span><b>选择素材</b></li>
+        <li data-guided-step="preview"><span>2</span><b>扫描预览</b></li>
+        <li data-guided-step="processing"><span>3</span><b>处理与结果</b></li>
+      </ol>
+      <div class="guided-step-actions">
+        <span id="guided-page-status" role="status" aria-live="polite">第 1 步：选择素材</span>
+        <button id="guided-back-button" class="button quiet hidden" type="button">上一步</button>
+        <button id="guided-continue-preview-button" class="button quiet hidden" type="button">继续查看现有预览</button>
+      </div>
+    </nav>
+
+    <section id="settings-section" class="panel settings" aria-labelledby="settings-title">
       <div class="section-heading">
         <div>
           <p class="eyebrow">第 1 步</p>
@@ -87,34 +102,12 @@
         </label>
       </div>
 
-      <div class="supported" id="supported-luts">
-        <span class="supported-icon" aria-hidden="true">✓</span>
-        <div><b>自动还原清单 · Log → Rec.709</b><div id="catalog-list" class="catalog-list">正在读取可用 LUT…</div></div>
-      </div>
-
-      <details id="lut-library-panel" class="lut-library-panel">
-        <summary class="lut-library-summary">
-          <span><b>全部已收录 LUT</b><small>浏览版本、格式、用途和适用相机</small></span>
-          <span id="library-count" class="count-badge">0 项</span>
-        </summary>
-        <div class="lut-library-content">
-          <p class="library-note">只有标记为“自动匹配可用”的 Log → Rec.709 LUT 会用于批量还原。创意风格、监看、Linear、HLG、sRGB 等其他用途仅供查看；Normal、HDR、元数据缺失或冲突、没有匹配 LUT 的素材仍会原样保留。</p>
-          <div class="library-search-row">
-            <label for="library-search">搜索 LUT</label>
-            <input id="library-search" type="search" autocomplete="off" placeholder="相机、模式、版本、格式或用途">
-            <span id="library-search-count" class="library-search-count" role="status" aria-live="polite"></span>
-          </div>
-          <div id="library-fallback" class="library-fallback hidden" role="status">此版本没有提供完整资源库；上方自动还原清单仍可使用。</div>
-          <div id="library-empty" class="library-fallback hidden" role="status">当前资源库为空；上方自动还原清单仍可使用。</div>
-          <div id="library-results" class="library-results"></div>
-          <div id="library-no-results" class="library-no-results hidden" role="status">没有符合搜索条件的 LUT。</div>
+      <div id="settings-action-host" class="settings-action-host">
+        <div id="primary-action-row" class="action-row">
+          <button id="preview-button" class="button primary" type="button"><span aria-hidden="true">⌕</span> 扫描并预览</button>
+          <button id="run-button" class="button start" type="button" disabled><span aria-hidden="true">▶</span> 开始还原</button>
+          <span id="settings-message" class="inline-message" role="status"></span>
         </div>
-      </details>
-
-      <div class="action-row">
-        <button id="preview-button" class="button primary" type="button"><span aria-hidden="true">⌕</span> 扫描并预览</button>
-        <button id="run-button" class="button start" type="button" disabled><span aria-hidden="true">▶</span> 开始还原</button>
-        <span id="settings-message" class="inline-message" role="status"></span>
       </div>
     </section>
 
@@ -132,13 +125,19 @@
       <p class="preview-summary-hint">待核查是原样保留视频的子集，不会重复计入视频总数。</p>
       <div id="preview-stale" class="notice stale-notice hidden" role="status">设置已改变，旧预览已失效；请重新扫描并预览。</div>
       <div class="notice" id="preview-notice"><span aria-hidden="true">ⓘ</span><span>只扫描视频格式，并依据相机与视频元数据识别；不会按文件名或画面猜测模式。无法确认的素材会复制并标记“待确认”。</span></div>
-      <div class="table-wrap">
+      <div id="preview-table-wrap" class="table-wrap">
         <table>
           <thead><tr><th>视频文件</th><th>拍摄模式</th><th>相机</th><th>计划使用 / 候选 LUT</th><th>计划操作</th><th>说明</th></tr></thead>
           <tbody id="preview-rows"></tbody>
         </table>
       </div>
+      <nav id="preview-pagination" class="pagination hidden" aria-label="预览分页">
+        <button id="preview-page-prev" class="button quiet" type="button" aria-label="上一页">上一页</button>
+        <span id="preview-page-status" class="pagination-status" aria-live="polite">第 1 / 1 页</span>
+        <button id="preview-page-next" class="button quiet" type="button" aria-label="下一页">下一页</button>
+      </nav>
       <div id="preview-empty" class="empty-state hidden"><span aria-hidden="true">▱</span><b>没有找到可处理的视频</b><small>检查文件夹路径，或勾选“包含子文件夹”。</small></div>
+      <div id="preview-action-host" class="preview-action-host"></div>
     </section>
 
     <section id="progress-section" class="panel results hidden" aria-labelledby="progress-title">
@@ -155,13 +154,19 @@
       </div>
       <div class="summary-grid" id="summary-grid"></div>
       <p class="preview-summary-hint progress-summary-hint">待确认项目已原样保留，且包含在原样复制数量中。</p>
-      <div class="table-wrap">
+      <div id="progress-table-wrap" class="table-wrap">
         <table>
           <thead><tr><th>视频文件</th><th>拍摄模式</th><th>相机</th><th>实际使用 / 候选 LUT</th><th>状态</th><th>进度</th><th>说明</th></tr></thead>
           <tbody id="progress-rows"></tbody>
         </table>
       </div>
-      <details class="logs" open>
+      <nav id="progress-pagination" class="pagination hidden" aria-label="处理结果分页">
+        <button id="progress-page-prev" class="button quiet" type="button" aria-label="上一页">上一页</button>
+        <span id="progress-page-status" class="pagination-status" aria-live="polite">第 1 / 1 页</span>
+        <button id="progress-page-next" class="button quiet" type="button" aria-label="下一页">下一页</button>
+      </nav>
+      <div id="progress-empty" class="empty-state hidden"><span aria-hidden="true">▱</span><b>暂无处理文件</b><small>处理状态更新后会显示在这里。</small></div>
+      <details id="log-panel" class="logs">
         <summary>处理日志</summary>
         <div id="log-list" class="log-list" aria-live="polite"></div>
       </details>
@@ -178,6 +183,61 @@
 
     <footer><span>DJI LUT · 本机运行</span><span id="footer-status">正在连接本机服务…</span></footer>
   </main>
+  <dialog id="lut-dialog" class="app-dialog resource-dialog" aria-labelledby="lut-dialog-title">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">资源参考</p><h2 id="lut-dialog-title">LUT 资源</h2></div>
+      <button id="lut-dialog-close" class="button quiet dialog-close-button" type="button">关闭</button>
+    </div>
+    <div class="dialog-scroll-content">
+      <details id="catalog-panel" class="lut-library-panel catalog-panel">
+        <summary class="lut-library-summary">
+          <span><b>自动还原清单 · Log → Rec.709</b><small>查看按相机、模式和风格匹配的资源</small></span>
+          <span id="catalog-count" class="count-badge">正在读取</span>
+        </summary>
+        <div class="lut-library-content">
+          <div class="supported" id="supported-luts">
+            <span class="supported-icon" aria-hidden="true">✓</span>
+            <div><b>仅列出当前自动匹配映射及资源可用性</b><div id="catalog-list" class="catalog-list">正在读取可用 LUT…</div></div>
+          </div>
+          <nav id="catalog-pagination" class="pagination hidden" aria-label="自动还原清单分页">
+            <button id="catalog-page-prev" class="button quiet" type="button" aria-label="上一页">上一页</button>
+            <span id="catalog-page-status" class="pagination-status" aria-live="polite">第 1 / 1 页</span>
+            <button id="catalog-page-next" class="button quiet" type="button" aria-label="下一页">下一页</button>
+          </nav>
+        </div>
+      </details>
+      <details id="lut-library-panel" class="lut-library-panel">
+        <summary class="lut-library-summary">
+          <span><b>全部已收录 LUT</b><small>浏览版本、格式、用途和适用相机</small></span>
+          <span id="library-count" class="count-badge">0 项</span>
+        </summary>
+        <div class="lut-library-content">
+          <p class="library-note">只有标记为“自动匹配可用”的 Log → Rec.709 LUT 会用于批量还原。创意风格、监看、Linear、HLG、sRGB 等其他用途仅供查看；Normal、HDR、元数据缺失或冲突、没有匹配 LUT 的素材仍会原样保留。</p>
+          <div class="library-search-row">
+            <label for="library-search">搜索 LUT</label>
+            <input id="library-search" type="search" autocomplete="off" placeholder="相机、模式、版本、格式或用途">
+            <span id="library-search-count" class="library-search-count" role="status" aria-live="polite"></span>
+          </div>
+          <div id="library-fallback" class="library-fallback hidden" role="status">此版本没有提供完整资源库；上方自动还原清单仍可使用。</div>
+          <div id="library-empty" class="library-fallback hidden" role="status">当前资源库为空；上方自动还原清单仍可使用。</div>
+          <div id="library-results" class="library-results"></div>
+          <div id="library-no-results" class="library-no-results hidden" role="status">没有符合搜索条件的 LUT。</div>
+          <nav id="library-pagination" class="pagination hidden" aria-label="LUT 资源库分页">
+            <button id="library-page-prev" class="button quiet" type="button" aria-label="上一页">上一页</button>
+            <span id="library-page-status" class="pagination-status" aria-live="polite">第 1 / 1 页</span>
+            <button id="library-page-next" class="button quiet" type="button" aria-label="下一页">下一页</button>
+          </nav>
+        </div>
+      </details>
+    </div>
+  </dialog>
+  <dialog id="file-detail-dialog" class="app-dialog detail-dialog" aria-labelledby="file-detail-title">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">文件详情</p><h2 id="file-detail-title">视频详情</h2></div>
+      <button id="file-detail-close" class="button quiet dialog-close-button" type="button">关闭</button>
+    </div>
+    <div id="file-detail-content" class="dialog-scroll-content detail-content"></div>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>
