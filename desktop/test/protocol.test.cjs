@@ -36,3 +36,12 @@ test('startup diagnostics redact token fragments and bearer credentials', () => 
   assert.equal(detail.includes('secret'), false);
   assert.equal(detail.includes('abc123'), false);
 });
+
+test('English protocol failures and redaction markers use the selected locale', () => {
+  assert.throws(
+    () => parseReadyLine(JSON.stringify({ type: 'ready', protocol: 9, url: 'http://127.0.0.1:48231/#token=0123456789abcdef0123456789abcdef' }), 'en'),
+    { message: 'Desktop service protocol version is incompatible (expected 1)' },
+  );
+  const detail = sanitizeDiagnostic('request failed Bearer abc123', '', 'en');
+  assert.equal(detail, 'request failed Bearer [redacted]');
+});

@@ -134,6 +134,88 @@ test('report dialog returning after quit cannot create a file', async (t) => {
   await assert.rejects(fs.promises.stat(target), { code: 'ENOENT' });
 });
 
+test('native folder and report dialogs use the latest selected language', async (t) => {
+  const root = await makeTempDirectory(t);
+  const dialogCalls = [];
+  let language = 'en';
+  const actions = createNativeActions({
+    dialog: {
+      async showOpenDialog(_window, options) {
+        dialogCalls.push(options);
+        return { canceled: true, filePaths: [] };
+      },
+      async showSaveDialog(_window, options) {
+        dialogCalls.push(options);
+        return { canceled: true, filePath: '' };
+      },
+    },
+    shell: {},
+    apiClient: {
+      async getState() {
+        return { status: 200, ok: true, payload: { finished: true, running: false, output_root: root, report: { summary: {} } } };
+      },
+    },
+    getWindow: () => ({ isDestroyed: () => false }),
+    getLanguage: () => language,
+    defaultInput: root,
+  });
+
+  await actions.selectFolder({ target: 'input', path: root });
+  language = 'zh-CN';
+  await actions.selectFolder({ target: 'output', path: root });
+  language = 'en';
+  await actions.exportReport();
+
+  assert.equal(dialogCalls[0].title, 'Choose source folder');
+  assert.equal(dialogCalls[1].title, '选择结果保存文件夹');
+  assert.equal(dialogCalls[2].title, 'Export processing report');
+  assert.equal(dialogCalls[2].filters[0].name, 'JSON report');
+});
+
+test('language preference action persists before reporting acceptance and refreshes native UI', async () => {
+  let language = 'zh-CN';
+  let changedTo = '';
+  let shouldFail = false;
+  const preferences = {
+    getLanguage: () => language,
+    async setLanguage(nextLanguage) {
+      if (shouldFail) throw new Error('filesystem detail');
+      language = nextLanguage;
+    },
+  };
+  const actions = createNativeActions({
+    dialog: {},
+    shell: {},
+    apiClient: {},
+    getWindow: () => ({ isDestroyed: () => false }),
+    preferences,
+    getLanguage: () => language,
+    onLanguageChanged: (nextLanguage) => { changedTo = nextLanguage; },
+  });
+
+  assert.deepEqual(await actions.getDesktopPreferences(), { status: 200, ok: true, payload: { language: 'zh-CN' } });
+  assert.deepEqual(await actions.setDesktopLanguage({ language: 'en' }), { status: 200, ok: true, payload: { language: 'en' } });
+  assert.equal(changedTo, 'en');
+  shouldFail = true;
+  const failed = await actions.setDesktopLanguage({ language: 'zh-CN' });
+  assert.equal(failed.status, 500);
+  assert.equal(failed.payload.error, 'Language preference could not be saved');
+  assert.equal(language, 'en');
+});
+
+test('language preference reports unavailable storage without claiming an invalid locale', async () => {
+  const actions = createNativeActions({
+    dialog: {},
+    shell: {},
+    apiClient: {},
+    getWindow: () => ({ isDestroyed: () => false }),
+    getLanguage: () => 'en',
+  });
+  const response = await actions.setDesktopLanguage({ language: 'en' });
+  assert.equal(response.status, 500);
+  assert.equal(response.payload.error, 'Language preference could not be saved');
+});
+
 async function makeTempDirectory(t) {
   const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'dji-lut-desktop-'));
   t.after(() => fs.promises.rm(directory, { recursive: true, force: true }));

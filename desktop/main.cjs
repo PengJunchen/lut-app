@@ -8,17 +8,19 @@ const { AppLifecycle } = require('./lib/app-lifecycle.cjs');
 const { EngineSupervisor } = require('./lib/engine-supervisor.cjs');
 const { defaultInputDirectory, engineBinaryPath } = require('./lib/engine-paths.cjs');
 const { createNativeActions } = require('./lib/native-actions.cjs');
+const { createPreferenceStore } = require('./lib/preferences.cjs');
 const { createRequestDispatcher } = require('./lib/request-dispatcher.cjs');
+const { buildApplicationMenu, normalizeSystemLocale, translate } = require('./lib/native-i18n.cjs');
 const { sanitizeDiagnostic } = require('./lib/protocol.cjs');
 
 const IPC_CHANNEL = 'dji-desktop:request';
-const WINDOW_TITLE = 'DJI 视频色彩还原';
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 let mainWindow = null;
 let supervisor = null;
 let apiClient = null;
 let lifecycle = null;
+let preferences = null;
 let serviceOrigin = '';
 let fatalDialogOpen = false;
 let processFailurePromise = null;
@@ -41,19 +43,24 @@ if (!gotSingleInstanceLock) {
   });
 
   app.whenReady().then(startDesktop).catch((error) => showFatalAndQuit(
-    '桌面应用启动失败',
-    'DJI 视频色彩还原无法启动。请重新打开应用；如果问题持续，请重新安装桌面版。',
+    text('fatal.startupTitle'),
+    text('fatal.startupMessage'),
     error,
   ));
 
   app.on('activate', () => {
     if (!mainWindow && lifecycle && !lifecycle.quitting) {
-      void showFatalAndQuit('桌面窗口已关闭', '请重新启动 DJI 视频色彩还原。');
+      void showFatalAndQuit(text('fatal.windowClosedTitle'), text('fatal.windowClosedMessage'));
     }
   });
 }
 
 async function startDesktop() {
+  let preferencePath = '';
+  try { preferencePath = path.join(app.getPath('userData'), 'preferences.json'); } catch { /* Use the OS locale if the profile path is unavailable. */ }
+  preferences = createPreferenceStore({ filePath: preferencePath, getSystemLocale: () => app.getLocale() });
+  await preferences.load();
+
   const inputPath = defaultInputDirectory({
     isPackaged: app.isPackaged,
     platform: process.platform,
@@ -66,39 +73,46 @@ async function startDesktop() {
     appPath: app.getAppPath(),
     platform: process.platform,
     arch: process.arch,
+    language: getLanguage(),
   });
 
-  supervisor = new EngineSupervisor({ binaryPath, inputPath });
+  supervisor = new EngineSupervisor({ binaryPath, inputPath, getLanguage });
   lifecycle = new AppLifecycle({
     app,
     supervisor,
     getWindow: () => mainWindow,
-    onShutdownError: (error) => console.error('Go 引擎关闭错误：', sanitizeDiagnostic(error.message, supervisor && supervisor.endpoint && supervisor.endpoint.token)),
+    getLanguage,
+    onShutdownError: (error) => console.error(
+      text('engine.shutdownError'),
+      sanitizeDiagnostic(error.message, supervisor && supervisor.endpoint && supervisor.endpoint.token, getLanguage()),
+    ),
   });
   process.once('SIGTERM', () => { void lifecycle.requestQuit(); });
   process.once('SIGINT', () => { void lifecycle.requestQuit(); });
 
   try {
-    await verifyEngineFile(binaryPath);
+    await verifyEngineFile(binaryPath, getLanguage);
     const ready = await supervisor.start();
     serviceOrigin = ready.origin;
     apiClient = new ApiClient({ origin: ready.origin, token: ready.token });
     lifecycle.apiClient = apiClient;
   } catch (error) {
     await showFatalAndQuit(
-      'Go 引擎启动失败',
-      `无法启动随应用提供的 Go 引擎。\n\n引擎位置：${binaryPath}\n\n请重新安装桌面版，并确认发行包包含此平台的引擎。`,
+      text('fatal.engineTitle'),
+      text('fatal.engineMessage', { path: binaryPath }),
       error,
     );
     return;
   }
 
   supervisor.on('unexpected-exit', ({ code, signal, diagnostic }) => {
-    const status = signal ? `终止信号：${signal}` : `退出代码：${code ?? '未知'}`;
+    const status = signal
+      ? text('fatal.exitSignal', { signal })
+      : text('fatal.exitCode', { code: code ?? text('common.unknown') });
     const details = [status, diagnostic].filter(Boolean).join('\n');
     void showFatalAndQuit(
-      '本机处理服务意外退出',
-      '视频处理服务已停止。请重新打开应用；如果问题持续，请重新安装桌面版。',
+      text('fatal.unexpectedExitTitle'),
+      text('fatal.unexpectedExitMessage'),
       details,
     );
   });
@@ -110,20 +124,23 @@ async function startDesktop() {
     await mainWindow.loadURL(serviceOrigin);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
   } catch (error) {
-    await showFatalAndQuit('界面加载失败', '无法打开桌面应用界面。请重新打开应用。', error);
+    await showFatalAndQuit(text('fatal.loadTitle'), text('fatal.loadMessage'), error);
   }
 }
 
-async function verifyEngineFile(binaryPath) {
+async function verifyEngineFile(binaryPath, getLocale = () => 'zh-CN') {
   let stat;
   try {
     stat = await fs.promises.stat(binaryPath);
   } catch (error) {
-    const detail = error && error.code === 'ENOENT' ? '引擎文件不存在' : '无法读取引擎文件';
-    throw new Error(`${detail}：${error && error.message ? error.message : binaryPath}`);
+    const detail = error && error.code === 'ENOENT'
+      ? translate('engine.fileMissing', getLocale())
+      : translate('engine.fileUnreadable', getLocale());
+    const diagnostic = sanitizeDiagnostic(error && error.message ? error.message : binaryPath, '', getLocale());
+    throw new Error(getLocale() === 'zh-CN' ? `${detail}：${diagnostic}` : `${detail}: ${diagnostic}`);
   }
-  if (!stat.isFile()) throw new Error('Go 引擎路径不是文件');
-  if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) throw new Error('Go 引擎没有可执行权限');
+  if (!stat.isFile()) throw new Error(translate('engine.pathNotFile', getLocale()));
+  if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) throw new Error(translate('engine.notExecutable', getLocale()));
 }
 
 function installRequestHandler() {
@@ -132,6 +149,9 @@ function installRequestHandler() {
     shell,
     apiClient,
     getWindow: () => mainWindow,
+    preferences,
+    getLanguage,
+    onLanguageChanged: () => refreshNativeLocale(),
     isClosing: () => lifecycle.quitting,
     defaultInput: defaultInputDirectory({
       isPackaged: app.isPackaged,
@@ -146,6 +166,7 @@ function installRequestHandler() {
     apiClient,
     nativeActions,
     lifecycle,
+    getLanguage,
   });
   ipcMain.handle(IPC_CHANNEL, dispatcher);
 }
@@ -155,7 +176,7 @@ function createMainWindow() {
   const width = Math.min(1120, available.width);
   const height = Math.min(820, available.height);
   mainWindow = new BrowserWindow({
-    title: WINDOW_TITLE,
+    title: text('app.title'),
     width,
     height,
     minWidth: Math.min(960, width),
@@ -193,14 +214,14 @@ function createMainWindow() {
   contents.on('render-process-gone', (_event, details) => {
     if (lifecycle.quitting) return;
     void showFatalAndQuit(
-      '桌面界面异常退出',
-      '应用界面已停止。请重新打开应用。',
-      `渲染进程状态：${details && details.reason ? details.reason : '未知'}`,
+      text('fatal.renderTitle'),
+      text('fatal.renderMessage'),
+      text('fatal.rendererStatus', { status: details && details.reason ? details.reason : text('common.unknown') }),
     );
   });
   contents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
     if (!isMainFrame || errorCode === -3 || lifecycle.quitting) return;
-    void showFatalAndQuit('界面加载失败', '无法连接桌面应用内的本机服务。请重新打开应用。', errorDescription);
+    void showFatalAndQuit(text('fatal.loadTitle'), text('fatal.connectMessage'), errorDescription);
   });
 
   const permissions = contents.session;
@@ -221,55 +242,24 @@ function isAllowedOrigin(candidate) {
 function installApplicationMenu() {
   const about = () => {
     void showMessageBox(
-      '关于 DJI 视频色彩还原',
-      WINDOW_TITLE,
-      '根据视频元数据选择匹配的 LUT，在本机生成独立结果。原片保持不变。',
+      text('about.title'),
+      text('app.title'),
+      text('about.message'),
       'info',
     );
   };
-  const template = [];
-  if (process.platform === 'darwin') {
-    template.push({
-      label: WINDOW_TITLE,
-      submenu: [
-        { label: '关于 DJI 视频色彩还原', click: about },
-        { type: 'separator' },
-        { label: '退出', accelerator: 'Cmd+Q', click: () => { void lifecycle.requestQuit(); } },
-      ],
-    });
-  }
-  template.push(
-    {
-      label: '文件',
-      submenu: process.platform === 'darwin'
-        ? [{ label: '关闭窗口', accelerator: 'Cmd+W', role: 'close' }]
-        : [{ label: '退出', accelerator: 'Ctrl+Q', click: () => { void lifecycle.requestQuit(); } }],
-    },
-    {
-      label: '编辑',
-      submenu: [
-        { label: '撤销', role: 'undo' },
-        { label: '重做', role: 'redo' },
-        { type: 'separator' },
-        { label: '剪切', role: 'cut' },
-        { label: '复制', role: 'copy' },
-        { label: '粘贴', role: 'paste' },
-        { label: '全选', role: 'selectAll' },
-      ],
-    },
-    {
-      label: '窗口',
-      submenu: [
-        { label: '最小化', role: 'minimize' },
-        { label: '关闭窗口', role: 'close' },
-      ],
-    },
-    {
-      label: '帮助',
-      submenu: [{ label: '关于 DJI 视频色彩还原', click: about }],
-    },
-  );
+  const template = buildApplicationMenu({
+    platform: process.platform,
+    getLanguage,
+    onAbout: about,
+    onQuit: () => { void lifecycle.requestQuit(); },
+  });
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function refreshNativeLocale() {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setTitle(text('app.title'));
+  installApplicationMenu();
 }
 
 async function showFatalAndQuit(title, message, detail) {
@@ -277,11 +267,11 @@ async function showFatalAndQuit(title, message, detail) {
   fatalDialogOpen = true;
   const engineShutdown = supervisor
     ? supervisor.shutdown(apiClient).catch((error) => {
-      console.error('Go 引擎关闭错误：', sanitizeDiagnostic(error.message, supervisor && supervisor.endpoint && supervisor.endpoint.token));
+      console.error(text('engine.shutdownError'), sanitizeDiagnostic(error.message, supervisor && supervisor.endpoint && supervisor.endpoint.token, getLanguage()));
     })
     : Promise.resolve();
   const diagnostic = detail instanceof Error ? detail.message : String(detail || '');
-  const safeDetail = sanitizeDiagnostic(diagnostic, supervisor && supervisor.endpoint && supervisor.endpoint.token).slice(-1800);
+  const safeDetail = sanitizeDiagnostic(diagnostic, supervisor && supervisor.endpoint && supervisor.endpoint.token, getLanguage()).slice(-1800);
   try {
     await showMessageBox(title, message, safeDetail, 'error');
   } catch {
@@ -294,10 +284,10 @@ async function showFatalAndQuit(title, message, detail) {
 
 function handleProcessFailure(reason) {
   if (processFailurePromise) return processFailurePromise;
-  const diagnostic = reason instanceof Error ? reason.message : String(reason ?? '未知错误');
-  const safeDiagnostic = sanitizeDiagnostic(diagnostic, supervisor && supervisor.endpoint && supervisor.endpoint.token);
+  const diagnostic = reason instanceof Error ? reason.message : String(reason ?? text('common.unknown'));
+  const safeDiagnostic = sanitizeDiagnostic(diagnostic, supervisor && supervisor.endpoint && supervisor.endpoint.token, getLanguage());
   processFailurePromise = (async () => {
-    console.error('桌面主进程异常：', safeDiagnostic.slice(-1800));
+    console.error(text('engine.processError'), safeDiagnostic.slice(-1800));
     const cleanup = lifecycle
       ? lifecycle.requestQuit()
       : supervisor ? supervisor.shutdown(apiClient) : Promise.resolve();
@@ -313,7 +303,16 @@ function handleProcessFailure(reason) {
 }
 
 function showMessageBox(title, message, detail = '', type = 'info') {
-  const options = { type, title, message, detail: sanitizeDiagnostic(detail).slice(-1800), buttons: ['好'] };
+  const options = { type, title, message, detail: sanitizeDiagnostic(detail, '', getLanguage()).slice(-1800), buttons: [text('dialog.ok')] };
   if (mainWindow && !mainWindow.isDestroyed()) return dialog.showMessageBox(mainWindow, options);
   return dialog.showMessageBox(options);
+}
+
+function getLanguage() {
+  if (preferences) return preferences.getLanguage();
+  try { return normalizeSystemLocale(app.getLocale()); } catch { return 'en'; }
+}
+
+function text(key, values) {
+  return translate(key, getLanguage(), values);
 }

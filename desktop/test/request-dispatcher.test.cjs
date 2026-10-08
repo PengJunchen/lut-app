@@ -70,3 +70,49 @@ test('dispatcher reaches native folder, output, report, and shutdown handlers', 
   assert.equal(shutdown.status, 202);
   assert.equal(scheduleCount, 1);
 });
+
+test('desktop language routes require the authenticated current main frame', async () => {
+  const frame = { url: 'http://127.0.0.1:43110/', parent: null };
+  const contents = { mainFrame: frame };
+  const window = { webContents: contents };
+  let language = 'zh-CN';
+  let setCount = 0;
+  const dispatcher = createRequestDispatcher({
+    getWindow: () => window,
+    getOrigin: () => 'http://127.0.0.1:43110',
+    apiClient: {},
+    nativeActions: {
+      async getDesktopPreferences() { return { status: 200, ok: true, payload: { language } }; },
+      async setDesktopLanguage({ language: nextLanguage }) {
+        setCount++;
+        language = nextLanguage;
+        return { status: 200, ok: true, payload: { language } };
+      },
+    },
+    lifecycle: { quitting: false, track: (operation) => operation(), scheduleQuit() {} },
+    getLanguage: () => language,
+  });
+  const mainFrameEvent = { sender: contents, senderFrame: frame };
+
+  const read = await dispatcher(mainFrameEvent, '/api/desktop-preferences', { method: 'GET' });
+  assert.deepEqual(read.payload, { language: 'zh-CN' });
+  const update = await dispatcher(mainFrameEvent, '/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'en' }),
+  });
+  assert.deepEqual(update.payload, { language: 'en' });
+  assert.equal(setCount, 1);
+
+  const childFrame = { url: frame.url, parent: frame };
+  const childRequest = await dispatcher({ sender: contents, senderFrame: childFrame }, '/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'zh-CN' }),
+  });
+  const otherOrigin = await dispatcher({ sender: contents, senderFrame: { url: 'https://example.com/', parent: null } }, '/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'zh-CN' }),
+  });
+  const otherSender = await dispatcher({ sender: {}, senderFrame: frame }, '/api/desktop-preferences', { method: 'GET' });
+  assert.equal(childRequest.status, 403);
+  assert.equal(otherOrigin.status, 403);
+  assert.equal(otherSender.status, 403);
+  assert.equal(setCount, 1);
+  assert.equal(language, 'en');
+});

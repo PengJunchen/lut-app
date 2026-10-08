@@ -1,18 +1,22 @@
 'use strict';
 
 const { parseInvocation, result, validateInvocationSource } = require('./ipc-contract.cjs');
+const { translate } = require('./native-i18n.cjs');
+const { sanitizeDiagnostic } = require('./protocol.cjs');
 
-function createRequestDispatcher({ getWindow, getOrigin, apiClient, nativeActions, lifecycle }) {
+function createRequestDispatcher({ getWindow, getOrigin, apiClient, nativeActions, lifecycle, getLanguage = () => 'zh-CN' }) {
   return async (event, route, options) => {
+    let language = 'zh-CN';
+    try { language = getLanguage(); } catch { /* Keep the default locale when state cannot be read. */ }
     const window = getWindow && getWindow();
     const origin = getOrigin && getOrigin();
     if (!validateInvocationSource(event, window, origin)) {
-      return result(403, { error: '拒绝来自非应用主窗口的请求' });
+      return result(403, { error: translate('ipc.untrustedSource', language) });
     }
 
     let invocation;
     try {
-      invocation = parseInvocation(route, options);
+      invocation = parseInvocation(route, options, language);
     } catch (error) {
       return result(400, { error: error.message });
     }
@@ -21,7 +25,7 @@ function createRequestDispatcher({ getWindow, getOrigin, apiClient, nativeAction
       lifecycle.scheduleQuit();
       return result(202, { ok: true });
     }
-    if (lifecycle.quitting) return result(503, { error: '应用正在关闭' });
+    if (lifecycle.quitting) return result(503, { error: translate('lifecycle.quitting', language) });
 
     try {
       return await lifecycle.track(async () => {
@@ -32,20 +36,22 @@ function createRequestDispatcher({ getWindow, getOrigin, apiClient, nativeAction
           'select-folder': nativeActions.selectFolder,
           'open-output': nativeActions.openOutput,
           'export-report': nativeActions.exportReport,
+          'get-desktop-preferences': nativeActions.getDesktopPreferences,
+          'set-desktop-language': nativeActions.setDesktopLanguage,
         }[invocation.action];
-        if (typeof action !== 'function') return result(400, { error: '不支持此桌面操作' });
-        if (invocation.action === 'select-folder') return action(invocation.body);
+        if (typeof action !== 'function') return result(400, { error: translate('ipc.appUnsupported', language) });
+        if (invocation.action === 'select-folder' || invocation.action === 'set-desktop-language') return action(invocation.body);
         return action();
       });
     } catch (error) {
-      return result(500, { error: safeErrorMessage(error) });
+      return result(500, { error: safeErrorMessage(error, language) });
     }
   };
 }
 
-function safeErrorMessage(error) {
+function safeErrorMessage(error, language = 'zh-CN') {
   const message = error && typeof error.message === 'string' ? error.message : '';
-  return message || '桌面操作失败';
+  return sanitizeDiagnostic(message, '', language) || translate('ipc.operationFailed', language);
 }
 
 module.exports = { createRequestDispatcher };

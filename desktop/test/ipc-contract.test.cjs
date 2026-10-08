@@ -16,6 +16,12 @@ test('IPC accepts only named routes with their fixed methods and bounded request
   assert.equal(parseInvocation('/api/select-folder', {
     method: 'POST', body: JSON.stringify({ target: 'input', path: '/source' }),
   }).action, 'select-folder');
+  assert.deepEqual(parseInvocation('/api/desktop-preferences', { method: 'GET' }), {
+    route: '/api/desktop-preferences', method: 'GET', kind: 'native', action: 'get-desktop-preferences', body: {},
+  });
+  assert.deepEqual(parseInvocation('/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'en' }),
+  }).body, { language: 'en' });
 
   assert.throws(() => parseInvocation('https://example.com/', { method: 'GET' }));
   assert.throws(() => parseInvocation('/api/run', { method: 'GET' }));
@@ -24,6 +30,16 @@ test('IPC accepts only named routes with their fixed methods and bounded request
   }));
   assert.throws(() => parseInvocation('/api/run', {
     method: 'POST', body: JSON.stringify({ input: '/source', shell: 'open /tmp' }),
+  }));
+  assert.throws(() => parseInvocation('/api/desktop-preferences', { method: 'GET', body: '{}' }));
+  assert.throws(() => parseInvocation('/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'zh-TW' }),
+  }));
+  assert.throws(() => parseInvocation('/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'en', userDataPath: '/tmp/elsewhere' }),
+  }));
+  assert.throws(() => parseInvocation('/api/desktop-language', {
+    method: 'POST', body: JSON.stringify({ language: 'en', theme: 'dark' }),
   }));
   assert.throws(() => parseInvocation('/api/select-folder', {
     method: 'POST', body: JSON.stringify({ target: 'input', path: 'x'.repeat(32 * 1024 + 1) }),
@@ -47,4 +63,15 @@ test('IPC accepts only the current top-level document and exact Go origin', () =
   assert.equal(validateInvocationSource({ sender: contents, senderFrame: frame }, window, 'http://127.0.0.1:41728'), false);
   frame.url = 'http://127.0.0.1:41728/#token=not-allowed-in-renderer';
   assert.equal(validateInvocationSource({ sender: contents, senderFrame: frame }, window, 'http://127.0.0.1:41728'), false);
+});
+
+test('English locale validation errors remain strict and localized', () => {
+  assert.throws(
+    () => parseInvocation('/api/desktop-language', { method: 'POST', body: '{"language":"fr"}' }, 'en'),
+    { message: 'Interface language is invalid' },
+  );
+  assert.throws(
+    () => parseInvocation('/api/desktop-language', { method: 'POST', body: '{"language":"en","extra":true}' }, 'en'),
+    { message: 'Desktop request contains an unsupported field' },
+  );
 });

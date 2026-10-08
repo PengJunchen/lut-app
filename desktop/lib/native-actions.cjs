@@ -3,6 +3,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { isPlainObject, result } = require('./ipc-contract.cjs');
+const { isSupportedLanguage, translate } = require('./native-i18n.cjs');
+const { sanitizeDiagnostic } = require('./protocol.cjs');
 
 const MAX_REPORT_BYTES = 32 * 1024 * 1024;
 
@@ -11,19 +13,23 @@ function createNativeActions({
   shell,
   apiClient,
   getWindow,
+  preferences = null,
+  getLanguage = () => preferences && typeof preferences.getLanguage === 'function' ? preferences.getLanguage() : 'zh-CN',
+  onLanguageChanged = () => undefined,
   isClosing = () => false,
   defaultInput = process.cwd(),
   fsPromises = fs.promises,
   pathModule = path,
 }) {
   let dialogOpen = false;
+  const text = (key, values = {}) => translate(key, getLanguage(), values);
 
   async function withDialog(operation) {
-    if (isClosing()) return result(503, { error: '应用正在关闭' });
-    if (dialogOpen) return result(409, { error: '已有系统选择窗口打开' });
+    if (isClosing()) return result(503, { error: text('lifecycle.quitting') });
+    if (dialogOpen) return result(409, { error: text('native.dialogOpen') });
     const parent = getWindow && getWindow();
     if (!parent || (typeof parent.isDestroyed === 'function' && parent.isDestroyed())) {
-      return result(503, { error: '应用窗口暂不可用' });
+      return result(503, { error: text('native.windowUnavailable') });
     }
     dialogOpen = true;
     try {
@@ -40,18 +46,18 @@ function createNativeActions({
       try {
         defaultPath = await nearestExistingDirectory(originalPath || defaultInput, { fsPromises, pathModule });
       } catch {
-        return result(400, { error: '无法找到可打开的起始文件夹' });
+        return result(400, { error: text('native.startFolderMissing') });
       }
 
       let selection;
       try {
         selection = await dialog.showOpenDialog(parent, {
-          title: target === 'input' ? '选择原片文件夹' : '选择结果保存文件夹',
+          title: text(target === 'input' ? 'dialog.selectInput' : 'dialog.selectOutput'),
           defaultPath,
           properties: ['openDirectory'],
         });
       } catch (error) {
-        return result(500, { error: safeFileError(error, '打开文件夹选择器失败') });
+        return result(500, { error: safeFileError(error, 'native.openPickerFailed', getLanguage()) });
       }
       if (isClosing()) return result(200, { path: originalPath, cancelled: true });
       if (!selection || selection.canceled || !Array.isArray(selection.filePaths) || !selection.filePaths[0]) {
@@ -61,10 +67,10 @@ function createNativeActions({
       try {
         const selectedPath = pathModule.resolve(selection.filePaths[0]);
         const stat = await fsPromises.stat(selectedPath);
-        if (!stat.isDirectory()) return result(400, { error: '所选路径不是文件夹' });
+        if (!stat.isDirectory()) return result(400, { error: text('native.folderNotDirectory') });
         return result(200, { path: selectedPath, cancelled: false });
       } catch (error) {
-        return result(400, { error: safeFileError(error, '所选文件夹不可用') });
+        return result(400, { error: safeFileError(error, 'native.selectedFolderUnavailable', getLanguage()) });
       }
     });
   }
@@ -74,30 +80,30 @@ function createNativeActions({
     if (!stateResult.ok) return stateResult;
     const state = stateResult.payload;
     if (!isPlainObject(state) || !state.finished) {
-      return result(409, { error: '处理尚未结束，结果文件夹还不可用' });
+      return result(409, { error: text('native.outputNotReady') });
     }
     const outputPath = state.output_root;
     if (typeof outputPath !== 'string' || !outputPath || !pathModule.isAbsolute(outputPath)) {
-      return result(409, { error: '没有有效的结果文件夹' });
+      return result(409, { error: text('native.outputInvalid') });
     }
 
     let directory;
     try {
       directory = await fsPromises.realpath(pathModule.resolve(outputPath));
       const stat = await fsPromises.stat(directory);
-      if (!stat.isDirectory()) return result(400, { error: '结果路径不是文件夹' });
+      if (!stat.isDirectory()) return result(400, { error: text('native.outputNotDirectory') });
     } catch (error) {
-      return result(400, { error: safeFileError(error, '结果文件夹不可用') });
+      return result(400, { error: safeFileError(error, 'native.outputUnavailable', getLanguage()) });
     }
 
     if (isClosing()) return result(200, { ok: true });
     try {
       const openError = await shell.openPath(directory);
       if (isClosing()) return result(200, { ok: true });
-      if (openError) return result(500, { error: `打开结果文件夹失败：${openError}` });
+      if (openError) return result(500, { error: safeFileError(new Error(openError), 'native.openOutputFailed', getLanguage()) });
       return result(200, { ok: true });
     } catch (error) {
-      return result(500, { error: safeFileError(error, '打开结果文件夹失败') });
+      return result(500, { error: safeFileError(error, 'native.openOutputFailed', getLanguage()) });
     }
   }
 
@@ -107,18 +113,18 @@ function createNativeActions({
     if (isClosing()) return result(200, { cancelled: true });
     const state = stateResult.payload;
     if (!isPlainObject(state) || !state.finished || state.running) {
-      return result(409, { error: '处理尚未结束，暂时没有可导出的报告' });
+      return result(409, { error: text('native.noReportYet') });
     }
-    if (!isPlainObject(state.report)) return result(409, { error: '本批次没有可导出的处理报告' });
+    if (!isPlainObject(state.report)) return result(409, { error: text('native.noReport') });
 
     let reportJSON;
     try {
       reportJSON = `${JSON.stringify(state.report, null, 2)}\n`;
     } catch {
-      return result(500, { error: '处理报告无法转换为 JSON' });
+      return result(500, { error: text('native.reportJsonFailed') });
     }
     if (Buffer.byteLength(reportJSON, 'utf8') > MAX_REPORT_BYTES) {
-      return result(413, { error: '处理报告过大，无法导出' });
+      return result(413, { error: text('native.reportTooLarge') });
     }
 
     const outputPath = typeof state.output_root === 'string' && pathModule.isAbsolute(state.output_root)
@@ -130,12 +136,12 @@ function createNativeActions({
       let choice;
       try {
         choice = await dialog.showSaveDialog(parent, {
-          title: '导出处理报告',
+          title: text('dialog.exportReport'),
           defaultPath,
-          filters: [{ name: 'JSON 报告', extensions: ['json'] }],
+          filters: [{ name: text('dialog.jsonReport'), extensions: ['json'] }],
         });
       } catch (error) {
-        return result(500, { error: safeFileError(error, '打开报告保存窗口失败') });
+        return result(500, { error: safeFileError(error, 'native.openSaveFailed', getLanguage()) });
       }
       if (isClosing()) return result(200, { cancelled: true });
       if (!choice || choice.canceled || !choice.filePath) return result(200, { cancelled: true });
@@ -143,21 +149,41 @@ function createNativeActions({
       let savePath = pathModule.resolve(choice.filePath);
       if (!pathModule.extname(savePath)) savePath += '.json';
       if (pathModule.extname(savePath).toLowerCase() !== '.json') {
-        return result(400, { error: '处理报告只能保存为 .json 文件' });
+        return result(400, { error: text('native.reportExtension') });
       }
       try {
         const parentStat = await fsPromises.stat(pathModule.dirname(savePath));
-        if (!parentStat.isDirectory()) return result(400, { error: '报告保存位置不可用' });
+        if (!parentStat.isDirectory()) return result(400, { error: text('native.reportLocationUnavailable') });
         if (isClosing()) return result(200, { cancelled: true });
         await fsPromises.writeFile(savePath, reportJSON, { encoding: 'utf8', flag: 'w', mode: 0o600 });
         return result(200, { path: savePath, cancelled: false });
       } catch (error) {
-        return result(500, { error: safeFileError(error, '写入处理报告失败') });
+        return result(500, { error: safeFileError(error, 'native.reportWriteFailed', getLanguage()) });
       }
     });
   }
 
-  return Object.freeze({ selectFolder, openOutput, exportReport });
+  async function getDesktopPreferences() {
+    return result(200, { language: preferences && typeof preferences.getLanguage === 'function' ? preferences.getLanguage() : getLanguage() });
+  }
+
+  async function setDesktopLanguage({ language } = {}) {
+    if (!isSupportedLanguage(language)) {
+      return result(400, { error: text('ipc.languageInvalid') });
+    }
+    if (!preferences || typeof preferences.setLanguage !== 'function') {
+      return result(500, { error: text('preferences.saveFailed') });
+    }
+    try {
+      await preferences.setLanguage(language);
+    } catch {
+      return result(500, { error: text('preferences.saveFailed') });
+    }
+    try { onLanguageChanged(language); } catch { /* Persisted language remains active for the renderer. */ }
+    return result(200, { language });
+  }
+
+  return Object.freeze({ selectFolder, openOutput, exportReport, getDesktopPreferences, setDesktopLanguage });
 }
 
 async function nearestExistingDirectory(candidate, { fsPromises = fs.promises, pathModule = path } = {}) {
@@ -177,9 +203,12 @@ async function nearestExistingDirectory(candidate, { fsPromises = fs.promises, p
   }
 }
 
-function safeFileError(error, fallback) {
+function safeFileError(error, fallbackKey, language = 'zh-CN') {
   const message = error && typeof error.message === 'string' ? error.message : '';
-  return message ? `${fallback}：${message}` : fallback;
+  const fallback = translate(fallbackKey, language);
+  const safeMessage = sanitizeDiagnostic(message, '', language);
+  if (!safeMessage) return fallback;
+  return language === 'zh-CN' ? `${fallback}：${safeMessage}` : `${fallback}: ${safeMessage}`;
 }
 
 module.exports = { MAX_REPORT_BYTES, createNativeActions, nearestExistingDirectory };

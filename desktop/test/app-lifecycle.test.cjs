@@ -10,10 +10,12 @@ test('quit destroys the dialog parent, shuts down Go, and bounds unresolved IPC 
   const app = { quit() { order.push('app-quit'); } };
   const window = { isDestroyed: () => false, destroy() { order.push('window-destroy'); } };
   const supervisor = { async shutdown() { order.push('go-shutdown'); } };
-  const lifecycle = new AppLifecycle({ app, supervisor, getWindow: () => window, operationDrainTimeoutMs: 15 });
+  const lifecycle = new AppLifecycle({ app, supervisor, getWindow: () => window, getLanguage: () => 'en', operationDrainTimeoutMs: 15 });
   const picker = lifecycle.track(() => new Promise((resolve) => { finishPicker = resolve; }));
 
   const quitting = lifecycle.requestQuit();
+  const rejectedOperation = await lifecycle.track(() => undefined);
+  assert.deepEqual(rejectedOperation, { status: 503, ok: false, payload: { error: 'The app is shutting down' } });
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(order, ['window-destroy', 'go-shutdown']);
 

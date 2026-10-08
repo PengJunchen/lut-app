@@ -2,6 +2,7 @@
 
 const MAX_REQUEST_BYTES = 1 << 20;
 const MAX_PATH_LENGTH = 32 * 1024;
+const { isSupportedLanguage, translate } = require('./native-i18n.cjs');
 
 const API_ROUTES = Object.freeze({
   '/api/bootstrap': Object.freeze({ method: 'GET', path: '/api/bootstrap', body: 'empty' }),
@@ -15,40 +16,42 @@ const NATIVE_ROUTES = Object.freeze({
   '/api/select-folder': Object.freeze({ method: 'POST', action: 'select-folder', body: 'folder' }),
   '/api/open-output': Object.freeze({ method: 'POST', action: 'open-output', body: 'empty' }),
   '/api/export-report': Object.freeze({ method: 'POST', action: 'export-report', body: 'empty' }),
+  '/api/desktop-preferences': Object.freeze({ method: 'GET', action: 'get-desktop-preferences', body: 'empty' }),
+  '/api/desktop-language': Object.freeze({ method: 'POST', action: 'set-desktop-language', body: 'language' }),
   '/api/shutdown': Object.freeze({ method: 'POST', action: 'shutdown', body: 'empty' }),
 });
 
 const ROUTES = Object.freeze({ ...API_ROUTES, ...NATIVE_ROUTES });
 
-function parseInvocation(route, options) {
+function parseInvocation(route, options, language = 'zh-CN') {
   if (typeof route !== 'string' || route.length > 64 || !Object.hasOwn(ROUTES, route)) {
-    throw new Error('不支持此桌面操作');
+    throw new Error(translate('ipc.unsupportedOperation', language));
   }
 
   const spec = ROUTES[route];
   if (options === undefined || options === null) options = {};
-  if (!isPlainObject(options)) throw new Error('桌面请求选项无效');
+  if (!isPlainObject(options)) throw new Error(translate('ipc.optionsInvalid', language));
   for (const key of Object.keys(options)) {
-    if (key !== 'method' && key !== 'body') throw new Error('桌面请求包含不支持的选项');
+    if (key !== 'method' && key !== 'body') throw new Error(translate('ipc.optionUnsupported', language));
   }
 
   const method = options.method === undefined ? spec.method : options.method;
-  if (method !== spec.method) throw new Error('桌面请求方法与接口不匹配');
+  if (method !== spec.method) throw new Error(translate('ipc.methodMismatch', language));
 
   let body = {};
   if (spec.method === 'GET') {
-    if (options.body !== undefined) throw new Error('读取请求不能包含请求内容');
+    if (options.body !== undefined) throw new Error(translate('ipc.getHasBody', language));
   } else if (options.body !== undefined) {
-    if (typeof options.body !== 'string') throw new Error('桌面请求内容必须是 JSON 文本');
-    if (Buffer.byteLength(options.body, 'utf8') > MAX_REQUEST_BYTES) throw new Error('桌面请求内容过大');
+    if (typeof options.body !== 'string') throw new Error(translate('ipc.bodyText', language));
+    if (Buffer.byteLength(options.body, 'utf8') > MAX_REQUEST_BYTES) throw new Error(translate('ipc.bodyTooLarge', language));
     try {
       body = JSON.parse(options.body);
     } catch {
-      throw new Error('桌面请求内容不是有效 JSON');
+      throw new Error(translate('ipc.bodyJsonInvalid', language));
     }
   }
-  if (!isPlainObject(body)) throw new Error('桌面请求内容必须是 JSON 对象');
-  validateBody(route, spec.body, body);
+  if (!isPlainObject(body)) throw new Error(translate('ipc.bodyObject', language));
+  validateBody(route, spec.body, body, language);
 
   return Object.freeze({
     route,
@@ -59,41 +62,46 @@ function parseInvocation(route, options) {
   });
 }
 
-function validateBody(route, bodyKind, body) {
+function validateBody(route, bodyKind, body, language) {
   if (bodyKind === 'empty') {
-    if (Object.keys(body).length !== 0) throw new Error('此桌面操作不接受请求内容');
+    if (Object.keys(body).length !== 0) throw new Error(translate('ipc.bodyNotAccepted', language));
     return;
   }
   if (bodyKind === 'folder') {
-    rejectUnknownKeys(body, new Set(['target', 'path']));
-    if (body.target !== 'input' && body.target !== 'output') throw new Error('文件夹选择目标无效');
-    validateOptionalString(body.path, '文件夹路径', MAX_PATH_LENGTH);
+    rejectUnknownKeys(body, new Set(['target', 'path']), language);
+    if (body.target !== 'input' && body.target !== 'output') throw new Error(translate('ipc.folderTargetInvalid', language));
+    validateOptionalString(body.path, 'ipc.folderPathInvalid', MAX_PATH_LENGTH, language);
     return;
   }
   if (bodyKind === 'options') {
-    rejectUnknownKeys(body, new Set(['input', 'output', 'look', 'recursive']));
-    validateOptionalString(body.input, '原片目录', MAX_PATH_LENGTH);
-    validateOptionalString(body.output, '结果目录', MAX_PATH_LENGTH);
+    rejectUnknownKeys(body, new Set(['input', 'output', 'look', 'recursive']), language);
+    validateOptionalString(body.input, 'ipc.sourceFolderInvalid', MAX_PATH_LENGTH, language);
+    validateOptionalString(body.output, 'ipc.outputFolderInvalid', MAX_PATH_LENGTH, language);
     if (body.look !== undefined && body.look !== 'standard' && body.look !== 'vivid') {
-      throw new Error('LUT 风格无效');
+      throw new Error(translate('ipc.lookInvalid', language));
     }
     if (body.recursive !== undefined && typeof body.recursive !== 'boolean') {
-      throw new Error('扫描选项无效');
+      throw new Error(translate('ipc.scanInvalid', language));
     }
     return;
   }
-  throw new Error(`桌面接口配置错误：${route}`);
+  if (bodyKind === 'language') {
+    rejectUnknownKeys(body, new Set(['language']), language);
+    if (!isSupportedLanguage(body.language)) throw new Error(translate('ipc.languageInvalid', language));
+    return;
+  }
+  throw new Error(translate('ipc.interfaceMisconfigured', language, { route }));
 }
 
-function validateOptionalString(value, label, maxLength) {
+function validateOptionalString(value, labelKey, maxLength, language) {
   if (value !== undefined && (typeof value !== 'string' || value.length > maxLength)) {
-    throw new Error(`${label}无效`);
+    throw new Error(translate(labelKey, language));
   }
 }
 
-function rejectUnknownKeys(value, allowed) {
+function rejectUnknownKeys(value, allowed, language = 'zh-CN') {
   for (const key of Object.keys(value)) {
-    if (!allowed.has(key)) throw new Error('桌面请求包含不支持的字段');
+    if (!allowed.has(key)) throw new Error(translate('ipc.bodyUnsupportedField', language));
   }
 }
 

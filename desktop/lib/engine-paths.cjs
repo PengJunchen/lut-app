@@ -1,23 +1,24 @@
 'use strict';
 
 const path = require('node:path');
+const { translate } = require('./native-i18n.cjs');
 
-function engineBinaryPath({ isPackaged, resourcesPath, appPath, platform = process.platform, arch = process.arch, pathModule = path }) {
-  const target = targetLabel(platform, arch);
+function engineBinaryPath({ isPackaged, resourcesPath, appPath, platform = process.platform, arch = process.arch, pathModule = path, language = 'zh-CN' }) {
+  const target = targetLabel(platform, arch, language);
   const executable = platform === 'win32' ? 'engine.exe' : 'engine';
   if (isPackaged) {
-    if (typeof resourcesPath !== 'string' || !resourcesPath) throw new Error('应用资源目录不可用');
+    if (typeof resourcesPath !== 'string' || !resourcesPath) throw new Error(translate('engine.verifyMissing', language));
     return pathModule.join(resourcesPath, 'engine', executable);
   }
-  if (typeof appPath !== 'string' || !appPath) throw new Error('应用源码目录不可用');
+  if (typeof appPath !== 'string' || !appPath) throw new Error(translate('engine.sourceMissing', language));
   return pathModule.join(appPath, 'desktop', '.generated', target, executable);
 }
 
-function targetLabel(platform, arch) {
+function targetLabel(platform, arch, language = 'zh-CN') {
   const os = platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'windows' : '';
   const cpu = arch === 'arm64' ? 'arm64' : arch === 'x64' ? 'amd64' : '';
   if (!os || !cpu || (platform === 'win32' && arch !== 'x64')) {
-    throw new Error(`此平台没有 Go 引擎：${platform}/${arch}`);
+    throw new Error(translate('engine.platformMissing', language, { platform: `${platform}/${arch}` }));
   }
   return `${os}-${cpu}`;
 }

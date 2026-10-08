@@ -2,33 +2,34 @@
 
 const READY_PROTOCOL = 1;
 const MAX_READY_LINE_BYTES = 16 * 1024;
+const { translate } = require('./native-i18n.cjs');
 
-function parseReadyLine(line) {
+function parseReadyLine(line, language = 'zh-CN') {
   if (typeof line !== 'string' || Buffer.byteLength(line, 'utf8') > MAX_READY_LINE_BYTES) {
-    throw new Error('桌面服务启动协议消息无效');
+    throw new Error(translate('protocol.messageInvalid', language));
   }
 
   let message;
   try {
     message = JSON.parse(line);
   } catch {
-    throw new Error('桌面服务未返回有效的启动协议消息');
+    throw new Error(translate('protocol.jsonInvalid', language));
   }
   if (!message || typeof message !== 'object' || Array.isArray(message) || message.type !== 'ready') {
-    throw new Error('桌面服务未返回就绪消息');
+    throw new Error(translate('protocol.readyMissing', language));
   }
   if (message.protocol !== READY_PROTOCOL) {
-    throw new Error(`桌面服务协议版本不兼容（需要 ${READY_PROTOCOL}）`);
+    throw new Error(translate('protocol.versionMismatch', language, { version: READY_PROTOCOL }));
   }
   if (typeof message.url !== 'string' || message.url.length > 2048) {
-    throw new Error('桌面服务没有提供有效的本机地址');
+    throw new Error(translate('protocol.addressInvalid', language));
   }
 
   let readyURL;
   try {
     readyURL = new URL(message.url);
   } catch {
-    throw new Error('桌面服务没有提供有效的本机地址');
+    throw new Error(translate('protocol.addressInvalid', language));
   }
   if (
     readyURL.protocol !== 'http:' ||
@@ -39,7 +40,7 @@ function parseReadyLine(line) {
     readyURL.pathname !== '/' ||
     readyURL.search !== ''
   ) {
-    throw new Error('桌面服务地址必须是本机回环地址');
+    throw new Error(translate('protocol.addressNotLoopback', language));
   }
 
   const fragment = readyURL.hash.startsWith('#') ? readyURL.hash.slice(1) : '';
@@ -50,7 +51,7 @@ function parseReadyLine(line) {
     values.length !== 1 ||
     !/^[A-Za-z0-9_-]{32,256}$/.test(values[0])
   ) {
-    throw new Error('桌面服务没有提供有效的访问凭据');
+    throw new Error(translate('protocol.credentialsInvalid', language));
   }
 
   return Object.freeze({
@@ -60,13 +61,14 @@ function parseReadyLine(line) {
   });
 }
 
-function sanitizeDiagnostic(input, secret = '') {
+function sanitizeDiagnostic(input, secret = '', language = 'zh-CN') {
   let value = String(input ?? '');
-  if (secret) value = value.split(secret).join('[已隐藏]');
+  const redacted = language === 'zh-CN' ? '[已隐藏]' : '[redacted]';
+  if (secret) value = value.split(secret).join(redacted);
   value = value
-    .replace(/(#token=)[^\s"'<>]*/gi, '$1[已隐藏]')
-    .replace(/(Bearer\s+)[A-Za-z0-9._~+\-/]+=*/gi, '$1[已隐藏]')
-    .replace(/((?:access[_-]?token|token)\s*[:=]\s*)[^\s,;"']+/gi, '$1[已隐藏]');
+    .replace(/(#token=)[^\s"'<>]*/gi, `$1${redacted}`)
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+\-/]+=*/gi, `$1${redacted}`)
+    .replace(/((?:access[_-]?token|token)\s*[:=]\s*)[^\s,;"']+/gi, `$1${redacted}`);
   return value.trim();
 }
 

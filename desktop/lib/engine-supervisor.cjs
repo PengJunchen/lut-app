@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const readline = require('node:readline');
 const { execFile } = require('node:child_process');
 const { parseReadyLine, sanitizeDiagnostic } = require('./protocol.cjs');
+const { translate } = require('./native-i18n.cjs');
 
 const DEFAULT_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 8_000;
@@ -15,6 +16,7 @@ class EngineSupervisor extends EventEmitter {
   constructor({
     binaryPath,
     inputPath,
+    getLanguage = () => 'zh-CN',
     platform = process.platform,
     spawnProcess = spawn,
     terminateTree = terminateProcessTree,
@@ -24,10 +26,11 @@ class EngineSupervisor extends EventEmitter {
     forceWaitMs = DEFAULT_FORCE_WAIT_MS,
   }) {
     super();
-    if (typeof binaryPath !== 'string' || !binaryPath) throw new Error('Go 引擎路径无效');
-    if (typeof inputPath !== 'string' || !inputPath) throw new Error('默认原片目录无效');
+    if (typeof binaryPath !== 'string' || !binaryPath) throw new Error(translate('engine.pathInvalid', getLanguage()));
+    if (typeof inputPath !== 'string' || !inputPath) throw new Error(translate('engine.inputInvalid', getLanguage()));
     this.binaryPath = binaryPath;
     this.inputPath = inputPath;
+    this.getLanguage = getLanguage;
     this.platform = platform;
     this.spawnProcess = spawnProcess;
     this.terminateTree = terminateTree;
@@ -52,7 +55,7 @@ class EngineSupervisor extends EventEmitter {
   }
 
   async start() {
-    if (this.state !== 'idle') throw new Error('Go 引擎已經启动');
+    if (this.state !== 'idle') throw new Error(translate('engine.alreadyStarted', this.getLanguage()));
     this.state = 'starting';
     this.closedPromise = new Promise((resolve) => { this.resolveClosed = resolve; });
 
@@ -65,7 +68,7 @@ class EngineSupervisor extends EventEmitter {
       });
     } catch (error) {
       this.state = 'failed';
-      throw new Error(`无法启动 Go 引擎：${safeMessage(error)}`);
+      throw new Error(translate('engine.startFailed', this.getLanguage(), { detail: safeMessage(error, this.getLanguage()) }));
     }
     this.child = child;
     if (child.stdin && typeof child.stdin.on === 'function') {
@@ -94,13 +97,13 @@ class EngineSupervisor extends EventEmitter {
     };
 
     if (!child.stdout || !child.stderr || !child.stdin) {
-      rejectStartup(new Error('Go 引擎未能创建标准输入输出管道'));
+      rejectStartup(new Error(translate('engine.pipesFailed', this.getLanguage())));
     } else {
       stdoutLines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
       stdoutLines.on('line', (line) => {
         if (!line.trim()) return;
         try {
-          acceptReady(parseReadyLine(line));
+          acceptReady(parseReadyLine(line, this.getLanguage()));
         } catch (error) {
           rejectStartup(error);
         }
@@ -108,12 +111,12 @@ class EngineSupervisor extends EventEmitter {
       child.stderr.on('data', (chunk) => this._appendDiagnostic(chunk));
     }
 
-    child.once('error', (error) => rejectStartup(new Error(`无法启动 Go 引擎：${safeMessage(error)}`)));
+    child.once('error', (error) => rejectStartup(new Error(translate('engine.startFailed', this.getLanguage(), { detail: safeMessage(error, this.getLanguage()) }))));
     child.once('exit', (code, signal) => {
       this.processExited = true;
       this.exitCode = code;
       this.exitSignal = signal;
-      if (!readySettled) rejectStartup(this._startupError('Go 引擎在就绪前退出'));
+      if (!readySettled) rejectStartup(this._startupError(translate('engine.exitedBeforeReady', this.getLanguage())));
       if (this.platform !== 'win32') {
         this.groupCleanupPromise = Promise.resolve(this.cleanupGroup(child, this.forceWaitMs)).catch(() => undefined);
       }
@@ -128,17 +131,17 @@ class EngineSupervisor extends EventEmitter {
       if (!this.exitSignal) this.exitSignal = signal;
       this.state = this.closing ? 'stopped' : 'exited';
       if (this.resolveClosed) this.resolveClosed({ code, signal });
-      if (!readySettled) rejectStartup(this._startupError('Go 引擎在就绪前退出'));
+      if (!readySettled) rejectStartup(this._startupError(translate('engine.exitedBeforeReady', this.getLanguage())));
       else if (!this.closing) this._emitUnexpectedExit(code, signal);
       if (stdoutLines) stdoutLines.close();
     });
 
-    const timeout = setTimeout(() => rejectStartup(new Error('等待 Go 引擎就绪超时')), this.readyTimeoutMs);
+    const timeout = setTimeout(() => rejectStartup(new Error(translate('engine.readyTimeout', this.getLanguage()))), this.readyTimeoutMs);
     try {
       const endpoint = await ready;
       clearTimeout(timeout);
       if (this.closed || child.exitCode !== null || child.signalCode) {
-        throw this._startupError('Go 引擎在就绪后立即退出');
+        throw this._startupError(translate('engine.exitedAfterReady', this.getLanguage()));
       }
       this.state = 'running';
       return endpoint;
@@ -147,7 +150,7 @@ class EngineSupervisor extends EventEmitter {
       this.closing = true;
       await this._stopChild({ graceful: false });
       this.state = 'failed';
-      throw this._startupError(error.message || 'Go 引擎启动失败');
+      throw this._startupError(error.message || translate('engine.startupFailed', this.getLanguage()));
     }
   }
 
@@ -193,7 +196,7 @@ class EngineSupervisor extends EventEmitter {
   }
 
   _appendDiagnostic(chunk) {
-    const incoming = sanitizeDiagnostic(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk), this.endpoint?.token);
+    const incoming = sanitizeDiagnostic(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk), this.endpoint?.token, this.getLanguage());
     const combined = `${this.diagnostic}${incoming}`;
     const bytes = Buffer.from(combined, 'utf8');
     this.diagnostic = bytes.length > MAX_DIAGNOSTIC_BYTES
@@ -203,7 +206,7 @@ class EngineSupervisor extends EventEmitter {
 
   _startupError(message) {
     const suffix = this.diagnostic ? `\n${this.diagnostic}` : '';
-    return new Error(`${sanitizeDiagnostic(message, this.endpoint?.token)}${suffix}`);
+    return new Error(`${sanitizeDiagnostic(message, this.endpoint?.token, this.getLanguage())}${suffix}`);
   }
 
   _emitUnexpectedExit(code, signal) {
@@ -238,8 +241,8 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function safeMessage(error) {
-  return sanitizeDiagnostic(error && error.message ? error.message : '未知错误');
+function safeMessage(error, language = 'zh-CN') {
+  return sanitizeDiagnostic(error && error.message ? error.message : translate('common.unknown', language), '', language);
 }
 
 async function terminateProcessTree(child, {

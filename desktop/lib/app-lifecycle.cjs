@@ -1,13 +1,15 @@
 'use strict';
 
 const { result } = require('./ipc-contract.cjs');
+const { translate } = require('./native-i18n.cjs');
 
 class AppLifecycle {
-  constructor({ app, supervisor, apiClient, getWindow, operationDrainTimeoutMs = 1_000, onShutdownError = () => undefined }) {
+  constructor({ app, supervisor, apiClient, getWindow, getLanguage = () => 'zh-CN', operationDrainTimeoutMs = 1_000, onShutdownError = () => undefined }) {
     this.app = app;
     this.supervisor = supervisor;
     this.apiClient = apiClient;
     this.getWindow = getWindow;
+    this.getLanguage = getLanguage;
     this.operationDrainTimeoutMs = operationDrainTimeoutMs;
     this.onShutdownError = onShutdownError;
     this.activeOperations = new Set();
@@ -18,7 +20,7 @@ class AppLifecycle {
   }
 
   track(operation) {
-    if (this.quitting) return Promise.resolve(result(503, { error: '应用正在关闭' }));
+    if (this.quitting) return Promise.resolve(result(503, { error: translate('lifecycle.quitting', this.getLanguage()) }));
     const promise = Promise.resolve().then(operation);
     this.activeOperations.add(promise);
     promise.then(
