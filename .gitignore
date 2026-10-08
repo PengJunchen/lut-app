@@ -162,3 +162,12 @@ venv/
 /docs/images/posters/
 /docs/marketing/
 /Marketing/
+
+# Native and JVM crash dumps can contain local paths, process state and memory.
+*.dmp
+*.core
+core.[0-9]*
+*.hprof
+*.stackdump
+*.crash
+*.ips
