@@ -11,6 +11,24 @@ import (
 
 const cancelledSentinel = "DJI_LUT_FOLDER_PICKER_CANCELLED"
 
+type languageContextKey struct{}
+
+// WithLanguage chooses the native dialog prompt without putting caller data
+// into either platform's fixed script. Unknown values use the Chinese prompt.
+func WithLanguage(ctx context.Context, language string) context.Context {
+	if language != "en" {
+		language = "zh-CN"
+	}
+	return context.WithValue(ctx, languageContextKey{}, language)
+}
+
+func dialogPrompt(ctx context.Context) string {
+	if ctx.Value(languageContextKey{}) == "en" {
+		return "Choose a folder"
+	}
+	return "选择文件夹"
+}
+
 // Picker opens an operating-system folder selection dialog.
 type Picker interface {
 	Select(context.Context, string) (path string, cancelled bool, err error)

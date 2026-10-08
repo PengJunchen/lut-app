@@ -269,6 +269,24 @@ func TestSelectFolderValidatesTargetAndSelectedDirectory(t *testing.T) {
 	}
 }
 
+func TestSelectFolderRejectsUnrecognizedLanguageBeforeOpeningPicker(t *testing.T) {
+	input := t.TempDir()
+	app := newApplication(engine.Config{}, nil, input)
+	picker := &testFolderPicker{cancelled: true}
+	app.folderPicker = picker
+	before := cloneState(app.state)
+	request, err := json.Marshal(folderPickerRequest{Target: "input", Path: input, Language: "unsupported"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.SelectFolder(t.Context(), request); err == nil {
+		t.Fatal("invalid interface language was accepted")
+	}
+	if picker.calls != 0 || !reflect.DeepEqual(before, app.State()) {
+		t.Fatal("invalid interface language changed application state or opened a picker")
+	}
+}
+
 func TestSelectFolderUsesExistingParentForMissingStartingPath(t *testing.T) {
 	input := t.TempDir()
 	missing := filepath.Join(input, "gone", "nested")

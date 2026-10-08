@@ -17,8 +17,10 @@ import (
 )
 
 const initialPathEnvironmentKey = "DJI_LUT_FOLDER_PICKER_INITIAL_DIR"
+const promptEnvironmentKey = "DJI_LUT_FOLDER_PICKER_PROMPT"
 
-// This fixed script receives the initial path only through its environment.
+// This fixed script receives the initial path and whitelisted prompt through
+// environment values rather than generated script source.
 // Its output is explicitly UTF-8 so Unicode paths round-trip through Go.
 const powerShellScript = `$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
@@ -26,7 +28,7 @@ $OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
 try {
-  $dialog.Description = '选择文件夹'
+  $dialog.Description = [Environment]::GetEnvironmentVariable('DJI_LUT_FOLDER_PICKER_PROMPT')
   $dialog.ShowNewFolderButton = $true
   $initial = [Environment]::GetEnvironmentVariable('DJI_LUT_FOLDER_PICKER_INITIAL_DIR')
   if (-not [string]::IsNullOrWhiteSpace($initial) -and [System.IO.Directory]::Exists($initial)) {
@@ -59,6 +61,7 @@ func (Native) Select(ctx context.Context, initial string) (string, bool, error) 
 		"-EncodedCommand", encodePowerShell(powerShellScript),
 	)
 	command.Env = withEnvironmentValue(os.Environ(), initialPathEnvironmentKey, start)
+	command.Env = withEnvironmentValue(command.Env, promptEnvironmentKey, dialogPrompt(ctx))
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout

@@ -9,12 +9,12 @@ import (
 	"os/exec"
 )
 
-// The AppleScript is fixed; the starting path is passed as an argv value so
-// quotes and other path characters can never become script source.
+// The AppleScript is fixed; the starting path and whitelisted prompt are argv
+// values, so quotes and other path characters never become script source.
 const appleScript = `on run argv
   set startFolder to POSIX file (item 1 of argv)
   try
-    set selectedFolder to choose folder with prompt "选择文件夹" default location startFolder
+    set selectedFolder to choose folder with prompt (item 2 of argv) default location startFolder
   on error errorMessage number errorNumber
     if errorNumber is -128 then return "DJI_LUT_FOLDER_PICKER_CANCELLED"
     error errorMessage number errorNumber
@@ -27,7 +27,7 @@ func (Native) Select(ctx context.Context, initial string) (string, bool, error) 
 	if err != nil {
 		return "", false, err
 	}
-	command := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", appleScript, start)
+	command := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", appleScript, start, dialogPrompt(ctx))
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()

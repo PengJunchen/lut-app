@@ -249,7 +249,7 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if name == "." || name == "" {
 		name = "index.html"
 	}
-	if name != "index.html" && name != "app.js" && name != "app.css" {
+	if name != "index.html" && name != "app.js" && name != "i18n.js" && name != "app.css" {
 		http.NotFound(w, r)
 		return
 	}

@@ -82,6 +82,26 @@ func TestLocalUIRequiresTokenAndSameOriginForCommands(t *testing.T) {
 	if strings.Contains(string(pageBody), token) {
 		t.Fatal("access token was embedded in page response")
 	}
+	translations, err := client.Get(origin + "/i18n.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	translationBody, _ := io.ReadAll(translations.Body)
+	_ = translations.Body.Close()
+	if translations.StatusCode != http.StatusOK || len(translationBody) == 0 || !strings.Contains(translations.Header.Get("Content-Type"), "javascript") {
+		t.Fatal("embedded translation module was not served as JavaScript")
+	}
+	if translations.Header.Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(translations.Header.Get("Content-Security-Policy"), "script-src 'self'") || strings.Contains(string(translationBody), token) {
+		t.Fatal("translation module did not preserve static-resource security boundaries")
+	}
+	blockedResource, err := client.Get(origin + "/unlisted-translation.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = blockedResource.Body.Close()
+	if blockedResource.StatusCode != http.StatusNotFound {
+		t.Fatal("static resource allowlist accepted an unlisted JavaScript file")
+	}
 
 	unauthorized, err := client.Get(origin + "/api/bootstrap")
 	if err != nil {

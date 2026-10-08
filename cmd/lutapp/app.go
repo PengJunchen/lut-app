@@ -26,8 +26,9 @@ type frontendRequest struct {
 }
 
 type folderPickerRequest struct {
-	Target string `json:"target"`
-	Path   string `json:"path"`
+	Target   string `json:"target"`
+	Path     string `json:"path"`
+	Language string `json:"language,omitempty"`
 }
 
 type folderPickerResult struct {
@@ -497,6 +498,10 @@ func (a *application) SelectFolder(ctx context.Context, raw json.RawMessage) (an
 	if request.Target != "input" && request.Target != "output" {
 		return nil, errors.New("文件夹选择目标必须是 input 或 output")
 	}
+	if request.Language != "" && request.Language != "zh-CN" && request.Language != "en" {
+		return nil, errors.New("界面语言必须是 zh-CN 或 en")
+	}
+	ctx = folderpicker.WithLanguage(ctx, request.Language)
 
 	a.mu.Lock()
 	if a.closing {

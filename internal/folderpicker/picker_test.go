@@ -1,10 +1,33 @@
 package folderpicker
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestDialogLanguageUsesOnlyWhitelistedPromptsAndPreservesCancellation(t *testing.T) {
+	for _, test := range []struct{ language, prompt string }{
+		{"en", "Choose a folder"},
+		{"zh-CN", "选择文件夹"},
+		{"", "选择文件夹"},
+		{"arbitrary caller text", "选择文件夹"},
+	} {
+		t.Run(test.language, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			localized := WithLanguage(ctx, test.language)
+			if got := dialogPrompt(localized); got != test.prompt {
+				t.Fatalf("dialog prompt = %q, want %q", got, test.prompt)
+			}
+			cancel()
+			if localized.Err() != context.Canceled {
+				t.Fatal("language context did not preserve cancellation")
+			}
+		})
+	}
+}
 
 func TestTrimProcessLineEndingPreservesDirectorySpaces(t *testing.T) {
 	for _, lineEnding := range []string{"\n", "\r\n"} {

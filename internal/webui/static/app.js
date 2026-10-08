@@ -1,6 +1,15 @@
 (() => {
   'use strict';
 
+  const i18nApi = window.DJILUTI18n;
+  let languageStorage;
+  try { languageStorage = window.localStorage; }
+  catch (_) { /* Browser language selection must work when storage is blocked. */ }
+  const initialLanguage = i18nApi.preferredBrowserLanguage(languageStorage, window.navigator);
+  const i18n = i18nApi.createI18n(initialLanguage);
+  const t = (key, values) => i18n.t(key, values);
+  i18n.apply(document);
+
   const $ = (id) => document.getElementById(id);
   const desktopBridge = window.djiDesktop;
   const isDesktop = Boolean(desktopBridge && typeof desktopBridge.request === 'function');
@@ -31,9 +40,14 @@
   let stateRecoveryEnabled = true;
   let pollTimer = null;
   let toastTimer = null;
+  let lastMessage = '';
+  let lastToastMessage = '';
   let libraryAssets = [];
   let libraryCatalog = [];
   let catalogEntries = [];
+  let latestBootstrap = null;
+  let currentPlan = null;
+  let desktopPreferenceReady = !isDesktop;
   let hasCompleteLibrary = false;
   let libraryCameraNames = new Map();
   const ROW_PAGE_SIZE = 5;
@@ -58,9 +72,13 @@
   let libraryPageCount = 1;
   let catalogPageCount = 1;
   let terminalResultPresented = false;
+  let currentDetail = null;
   const dialogOpener = new WeakMap();
 
   history.replaceState(null, '', location.pathname + location.search);
+
+  $('language-select').value = i18n.language;
+  $('language-select').disabled = isDesktop;
 
   const val = (obj, ...keys) => {
     if (!obj) return undefined;
@@ -74,6 +92,7 @@
   const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), recursive: $('recursive').checked});
   const api = async (route, options = {}) => {
     if (isDesktop) {
+      const languagePreferenceWrite = route === '/api/desktop-language' && (options.method || 'GET') === 'POST';
       let response;
       try {
         response = await desktopBridge.request(route, {
@@ -84,8 +103,10 @@
         const status = Number(error?.status);
         const validStatus = Number.isInteger(status) && status >= 100 && status <= 599;
         const reachable = validStatus && status < 500 && status !== 401 && status !== 403;
-        setConnection(reachable);
-        const failure = new Error(reachable ? text(error?.message, `请求失败 (${status})`) : '无法连接本机服务，请点击“重新连接”后重试。');
+        const preserveConnection = languagePreferenceWrite && validStatus && status !== 401 && status !== 403;
+        if (!preserveConnection) setConnection(reachable);
+        const fallback = preserveConnection || reachable ? t('api.requestFailed', {status}) : t('api.unavailable');
+        const failure = new Error(text(error?.message, fallback));
         failure.cause = error;
         if (Number.isFinite(status)) failure.status = status;
         throw failure;
@@ -94,17 +115,21 @@
       const payload = response?.payload ?? {};
       const ok = Boolean(response?.ok);
       const validStatus = Number.isInteger(status) && status >= 100 && status <= 599;
-      setConnection(validStatus && status !== 401 && status !== 403 && status < 500);
-      if (!ok) {
-        const message = text(val(payload, 'error', 'message'), `请求失败 (${validStatus ? status : '未知状态'})`);
-        if (status === 401 || status === 403 || status >= 500) setConnection(false);
+      const preserveConnection = languagePreferenceWrite && validStatus && status !== 401 && status !== 403;
+      if (!preserveConnection || status === 401 || status === 403 || !validStatus) {
+        setConnection(validStatus && status !== 401 && status !== 403 && status < 500);
+      }
+      if (!validStatus) throw new Error(t('api.unavailable'));
+      if (!ok || status < 200 || status >= 300) {
+        const message = text(val(payload, 'error', 'message'), t('api.requestFailed', {status: validStatus ? status : t('api.unknownStatus')}));
+        if (status === 401 || status === 403 || (status >= 500 && !preserveConnection)) setConnection(false);
         const failure = new Error(message);
         if (validStatus) failure.status = status;
         throw failure;
       }
       return payload;
     }
-    if (!token) throw new Error('缺少本机访问凭据，请关闭此页面后重新启动应用。');
+    if (!token) throw new Error(t('api.missingCredential'));
     const headers = new Headers(options.headers || {});
     headers.set('Authorization', `Bearer ${token}`);
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -113,7 +138,7 @@
       response = await fetch(route, {...options, headers, cache:'no-store', credentials:'same-origin'});
     } catch (error) {
       setConnection(false);
-      const unavailable = new Error('无法连接本机服务，请点击“重新连接”后重试。');
+      const unavailable = new Error(t('api.unavailable'));
       unavailable.cause = error;
       throw unavailable;
     }
@@ -122,7 +147,7 @@
     let payload = {};
     try { payload = body ? JSON.parse(body) : {}; } catch (_) { payload = {message: body}; }
     if (!response.ok) {
-      const message = text(val(payload, 'error', 'message'), `请求失败 (${response.status})`);
+      const message = text(val(payload, 'error', 'message'), t('api.requestFailed', {status: response.status}));
       if (response.status === 401 || response.status === 403) setConnection(false);
       if (response.status >= 500) setConnection(false);
       const failure = new Error(message);
@@ -133,20 +158,107 @@
   };
   const toast = (message) => {
     const node = $('toast');
+    lastToastMessage = message;
     node.textContent = message;
     node.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => node.classList.remove('show'), 2600);
   };
-  const showMessage = (message = '') => { $('settings-message').textContent = message; };
+  const showMessage = (message = '') => {
+    lastMessage = message;
+    $('settings-message').textContent = message;
+  };
+  function localizedError(error) {
+    const raw = text(error?.message, t('generic.error'));
+    return i18n.translateKnownMessage(raw) || t('api.technicalDetails', {details: raw});
+  }
+  const nativeLanguageController = isDesktop ? i18nApi.createNativeLanguageController({
+    initialLanguage: i18n.language,
+    save: (language) => api('/api/desktop-language', {method:'POST', body:JSON.stringify({language})}),
+    onLanguage: (language) => {
+      if (i18n.language !== language) {
+        i18n.setLanguage(language);
+        renderLocalizedContent();
+      }
+    },
+    onError: (error) => {
+      const known = i18n.translateKnownMessage(error?.message);
+      const message = known || t('api.languageSaveFailed', {details: localizedError(error)});
+      showMessage(message);
+      toast(message);
+    }
+  }) : null;
+  function renderLocalizedContent() {
+    const previousView = {
+      guidedStep,
+      previewPage,
+      progressPage,
+      libraryPage,
+      catalogPage,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      elementScroll: [...document.querySelectorAll('*')].map((element) => [element, element.scrollTop, element.scrollLeft])
+    };
+    i18n.apply(document);
+    document.title = t('app.title');
+    $('language-select').value = i18n.language;
+    $('language-select').disabled = isDesktop && !desktopPreferenceReady;
+    $('app-mode-hint').textContent = t(isDesktop ? 'app.desktopHint' : 'app.localHint');
+    updateGuidedPage();
+    updateOutputDestination();
+    if (latestBootstrap) renderBootstrapResources(latestBootstrap, true);
+    if (currentPlan) renderPlan(currentPlan, true, true);
+    if (currentState) renderState(currentState);
+    else if (connected) $('footer-status').textContent = t(isDesktop ? 'connection.desktopReady' : 'state.localReady');
+    if (currentDetail && $('file-detail-dialog').open) renderItemDetails(currentDetail.item, currentDetail.preview);
+    if (lastMessage) {
+      const translated = i18n.translateKnownMessage(lastMessage);
+      if (translated) showMessage(translated);
+    }
+    const toastNode = $('toast');
+    if (toastNode.classList.contains('show') && lastToastMessage) {
+      const translated = i18n.translateKnownMessage(lastToastMessage);
+      if (translated) {
+        lastToastMessage = translated;
+        toastNode.textContent = translated;
+      }
+    }
+    guidedStep = previousView.guidedStep;
+    previewPage = previousView.previewPage;
+    progressPage = previousView.progressPage;
+    libraryPage = previousView.libraryPage;
+    catalogPage = previousView.catalogPage;
+    updateGuidedPage();
+    for (const [element, top, left] of previousView.elementScroll) {
+      if (element.isConnected) {
+        element.scrollTop = top;
+        element.scrollLeft = left;
+      }
+    }
+    window.scrollTo(previousView.scrollX, previousView.scrollY);
+    syncControls();
+  }
+  async function changeLanguage(value) {
+    const next = i18nApi.normalizeLanguage(value);
+    if (!next || next === i18n.language) return;
+    if (isDesktop) {
+      if (desktopPreferenceReady) nativeLanguageController.select(next);
+      return;
+    }
+    i18n.setLanguage(next);
+    try { window.localStorage.setItem('dji-lut-language', next); }
+    catch (_) { /* Language switching remains available without persistent storage. */ }
+    renderLocalizedContent();
+  }
   const operationBusy = () => Boolean(activeOperation) || processing || shuttingDown;
   const setConnection = (ready) => {
     connected = ready;
     const node = $('connection');
     node.classList.toggle('disconnected', !ready);
-    node.innerHTML = `<i></i> ${ready ? (isDesktop ? '桌面应用已就绪' : '本机服务已连接') : (isDesktop ? '桌面应用连接中断' : '连接中断')}`;
+    node.innerHTML = `<i></i> ${ready ? t(isDesktop ? 'connection.desktopReady' : 'connection.localReady') : t(isDesktop ? 'connection.desktopLost' : 'connection.localLost')}`;
+    node.setAttribute('aria-label', ready ? t(isDesktop ? 'connection.desktopReady' : 'connection.localReady') : t(isDesktop ? 'connection.desktopLost' : 'connection.localLost'));
     reconnectButton.classList.toggle('hidden', ready || (!isDesktop && !token));
-    if (!ready) $('footer-status').textContent = isDesktop ? '桌面应用连接中断，请重新连接后继续' : '本机服务连接中断，请重新连接后继续';
+    if (!ready) $('footer-status').textContent = t(isDesktop ? 'connection.desktopLostHint' : 'connection.localLostHint');
     syncControls();
   };
   const syncControls = () => {
@@ -191,7 +303,7 @@
     const selected = outputPath.value.trim();
     if (selected) return selected;
     const input = inputPath.value.trim();
-    if (!input) return '原片文件夹/Output';
+    if (!input) return t('output.inputDefault');
     const separator = /^[A-Za-z]:\\/.test(input) || input.includes('\\') ? '\\' : '/';
     return `${input.replace(/[\\/]+$/, '')}${separator}Output`;
   };
@@ -209,7 +321,7 @@
     return normalize(left) === normalize(right);
   };
   const updateOutputDestination = () => {
-    $('output-destination').textContent = `最终目的地：${finalOutputDestination()}`;
+    $('output-destination').textContent = t('output.destination', {path: finalOutputDestination()});
   };
   function pageCount(items, size) {
     return Math.max(1, Math.ceil((items || []).length / size));
@@ -231,9 +343,9 @@
 
     document.body.classList.toggle('guided-mode', guided);
     document.body.dataset.interfaceMode = interfaceMode;
-    $('mode-toggle').textContent = guided ? '经典模式' : '分步模式';
-    $('mode-toggle').setAttribute('aria-label', guided ? '切换到经典模式' : '切换到分步模式');
-    $('mode-toggle').title = guided ? '切换到经典模式' : '切换到分步模式';
+    $('mode-toggle').textContent = t(guided ? 'mode.classic' : 'mode.guided');
+    $('mode-toggle').setAttribute('aria-label', t(guided ? 'mode.switchClassic' : 'mode.switchGuided'));
+    $('mode-toggle').title = t(guided ? 'mode.switchClassic' : 'mode.switchGuided');
     nav.classList.toggle('hidden', !guided);
 
     if (!guided) {
@@ -257,18 +369,18 @@
       else step.removeAttribute('aria-current');
     }
     const status = {
-      settings: '第 1 步：选择素材',
-      preview: '第 2 步：扫描预览',
-      processing: '第 3 步：正在处理',
-      result: '第 3 步：处理结果'
+      settings: t('step.oneSettings'),
+      preview: t('step.twoPreview'),
+      processing: t('step.threeProcessing'),
+      result: t('step.threeResult')
     };
     $('guided-page-status').textContent = status[guidedStep] || status.settings;
 
     const canReturn = (guidedStep === 'preview' && previewPageAvailable) || (guidedStep === 'result' && progressPageAvailable);
     $('guided-back-button').classList.toggle('hidden', !canReturn);
     $('guided-back-button').textContent = guidedStep === 'result'
-      ? '回看预览'
-      : batchLocked ? '返回处理结果' : '返回设置';
+      ? t('step.backToPreview')
+      : batchLocked ? t('step.backToResults') : t('step.backToSettings');
     const canResumePreview = guidedStep === 'settings' && !batchLocked && hasReusablePreview();
     $('guided-continue-preview-button').classList.toggle('hidden', !canResumePreview);
     $('run-button').classList.toggle('guided-hidden', guidedStep !== 'preview');
@@ -299,8 +411,9 @@
     if (previewSnapshot && JSON.stringify(settings()) !== previewSnapshot) {
       hasPreview = false;
       previewSnapshot = '';
+      currentPlan = null;
       $('preview-stale').classList.remove('hidden');
-      showMessage('设置已改变，旧预览已失效；请重新扫描并预览。');
+      showMessage(t('preview.stale'));
       if (guidedStep === 'preview') guidedStep = 'settings';
       updateGuidedPage();
       syncControls();
@@ -342,9 +455,9 @@
     const node = $('catalog-list');
     catalogPageCount = pageCount(catalogEntries, CATALOG_PAGE_SIZE);
     catalogPage = Math.max(0, Math.min(catalogPage, catalogPageCount - 1));
-    $('catalog-count').textContent = catalogEntries.length ? `${catalogEntries.length} 个组合` : '暂不可用';
+    $('catalog-count').textContent = catalogEntries.length ? t('lut.catalogCombinations', {count: catalogEntries.length}) : t('lut.unavailable');
     if (!catalogEntries.length) {
-      node.textContent = '当前没有可自动匹配的 Log → Rec.709 LUT。';
+      node.textContent = t('lut.catalogEmpty');
       $('catalog-page-status').textContent = '';
       $('catalog-pagination').classList.add('hidden');
     } else {
@@ -352,13 +465,14 @@
       const visibleEntries = catalogEntries.slice(start, start + CATALOG_PAGE_SIZE);
       const end = Math.min(catalogEntries.length, start + visibleEntries.length);
       node.innerHTML = visibleEntries.join('');
-      $('catalog-page-status').textContent = `第 ${catalogPage + 1} / ${catalogPageCount} 页 · ${start + 1}–${end} 项`;
+      $('catalog-page-status').textContent = t('catalog.pageStatus', {page: catalogPage + 1, pages: catalogPageCount, start: start + 1, end});
       $('catalog-pagination').classList.toggle('hidden', catalogEntries.length <= CATALOG_PAGE_SIZE);
     }
     $('catalog-page-prev').disabled = catalogPage <= 0;
     $('catalog-page-next').disabled = catalogPage >= catalogPageCount - 1;
   }
-  function listCatalog(catalog, library) {
+  function listCatalog(catalog, library, preservePage = false) {
+    const previousPage = catalogPage;
     const entries = Array.isArray(catalog) ? catalog : [];
     const assets = val(library, 'assets', 'Assets');
     const assetById = new Map((Array.isArray(assets) ? assets : []).map((asset) => [text(val(asset, 'id', 'ID')), asset]).filter(([id]) => id));
@@ -405,25 +519,25 @@
         const resourceName = title || (file ? baseName(file) : 'LUT');
         const detail = item
           ? `${esc(resourceName)}${version ? ` · ${esc(version)}` : ''}`
-          : '当前未提供自动匹配资源';
+          : t('catalog.unavailableResource');
         const lookName = lookLabel(look);
-        supported.push(`<span class="catalog-pill${item ? '' : ' unavailable'}"><b>${esc(label)} · ${esc(lookName)}${item ? ' · 可用' : ''}</b><small class="catalog-detail">${detail}</small></span>`);
+        supported.push(`<span class="catalog-pill${item ? '' : ' unavailable'}"><b>${esc(label)} · ${esc(lookName)}${item ? esc(t('catalog.availableSuffix')) : ''}</b><small class="catalog-detail">${detail}</small></span>`);
       }
     }
     catalogEntries = supported;
-    catalogPage = 0;
+    catalogPage = preservePage ? previousPage : 0;
     renderCatalogPage();
   }
 
   function profileLabel(profile) {
     const key = text(profile).toLowerCase().replace(/[-_ ]/g, '');
-    const labels = {dlog2:'D-Log2', dlogm:'D-Log M', dlog:'D-Log', rec709:'Rec.709', linear:'线性', other:'其他'};
-    return labels[key] || text(profile, '未知模式');
+    const labels = {dlog2:'D-Log2', dlogm:'D-Log M', dlog:'D-Log', rec709:'Rec.709', linear:t('look.linear'), other:t('lut.otherProfile')};
+    return labels[key] || text(profile, t('lut.unknownProfile'));
   }
   function lookLabel(look) {
     const key = text(look).trim().toLowerCase();
-    const labels = {standard:'标准', vivid:'鲜艳', gamma18:'Gamma 1.8', gamma22:'Gamma 2.2'};
-    return labels[key] || text(look, '其他风格');
+    const labels = {standard:t('look.standardLabel'), vivid:t('look.vividLabel'), gamma18:t('look.gamma18'), gamma22:t('look.gamma22')};
+    return labels[key] || text(look, t('lut.otherLook'));
   }
   function cameraLabel(camera) {
     const directName = typeof camera === 'object' && camera !== null ? text(val(camera, 'name', 'Name', 'title', 'label')) : '';
@@ -432,28 +546,28 @@
     const labels = {
       pocket4p:'DJI Osmo Pocket 4P', pocket3:'DJI Osmo Pocket 3', action4:'DJI Osmo Action 4',
       action5pro:'DJI Osmo Action 5 Pro', action6:'DJI Osmo Action 6', mavic3:'DJI Mavic 3',
-      mavic2pro:'DJI Mavic 2 Pro', air2s:'DJI Air 2S', air3:'DJI Air 3', air3s:'DJI Air 3S', unknown:'未识别'
+      mavic2pro:'DJI Mavic 2 Pro', air2s:'DJI Air 2S', air3:'DJI Air 3', air3s:'DJI Air 3S'
     };
-    return directName || libraryCameraNames.get(key) || labels[key] || id || '未识别';
+    return directName || libraryCameraNames.get(key) || labels[key] || id || t('lut.unrecognized');
   }
   function outputColorLabel(value) {
-    const labels = {rec709:'Rec.709', 'rec2020-hlg':'Rec.2020 HLG', srgb:'sRGB', dlog:'D-Log', unknown:'未知'};
-    return labels[text(value).toLowerCase()] || '未知';
+    const labels = {rec709:'Rec.709', 'rec2020-hlg':'Rec.2020 HLG', srgb:'sRGB', dlog:'D-Log'};
+    return labels[text(value).toLowerCase()] || t('lut.unknownColor');
   }
   function purposeLabel(value) {
-    const labels = {restore:'还原转换', creative:'创意风格', gamma_conversion:'伽马转换', monitoring:'监看', unknown:'用途待确认'};
-    return labels[text(value).toLowerCase()] || '用途待确认';
+    const labels = {restore:t('lut.restore'), creative:t('lut.creative'), gamma_conversion:t('lut.gammaConversion'), monitoring:t('lut.monitoring')};
+    return labels[text(value).toLowerCase()] || t('lut.unknownPurpose');
   }
   function provenanceLabel(value) {
     const raw = typeof value === 'object' && value !== null ? text(val(value, 'label', 'name', 'source', 'kind')) : text(value);
     const key = raw.toLowerCase().replace(/[-_ ]/g, '');
-    if (key === 'supplied' || key === 'usersupplied' || key === 'provided') return '已提供来源';
-    if (key === 'official' || key === 'djiofficial' || key === 'djidownloadcenter') return 'DJI 官方来源';
+    if (key === 'supplied' || key === 'usersupplied' || key === 'provided') return t('lut.suppliedSource');
+    if (key === 'official' || key === 'djiofficial' || key === 'djidownloadcenter') return t('lut.officialSource');
     return raw;
   }
   function formatLabel(value) {
     const format = text(value).trim();
-    return format ? format.toUpperCase() : '格式未知';
+    return format ? format.toUpperCase() : t('lut.unknownFormat');
   }
   function gridLabel(value) {
     if (value === undefined || value === null || value === '') return '';
@@ -462,7 +576,7 @@
   }
   function assetVersionLabel(asset) {
     const version = text(val(asset, 'version', 'Version')).trim();
-    return version || '官方未标版本';
+    return version || t('lut.officialNoVersion');
   }
   function lutGridLabel(asset) {
     const rawDimension = val(asset, 'dimension', 'Dimension');
@@ -471,10 +585,10 @@
     const isOneDimensional = dimension === '1d' || dimension === '1' || (!dimension && type === '1d');
     if (isOneDimensional) {
       const length = text(val(asset, 'lut_1d_size', 'LUT1DSize'));
-      return length ? `1D · 长度 ${length}` : '1D';
+      return length ? `1D · ${t('lut.length', {length})}` : '1D';
     }
     const grid = gridLabel(val(asset, 'lut_3d_size', 'LUT3DSize', 'grid', 'Grid'));
-    return grid ? `${grid} 网格` : '';
+    return grid ? t('lut.grid', {grid}) : '';
   }
   function lutAssetText(asset) {
     const file = text(val(asset, 'file', 'File'));
@@ -518,8 +632,12 @@
     const start = libraryPage * LIBRARY_PAGE_SIZE;
     const visibleMatches = matches.slice(start, start + LIBRARY_PAGE_SIZE);
     const end = Math.min(matches.length, start + visibleMatches.length);
-    $('library-search-count').textContent = query.length ? `显示 ${matches.length} / ${libraryAssets.length} 项` : `共 ${matches.length} 项`;
-    $('library-page-status').textContent = matches.length ? `第 ${libraryPage + 1} / ${libraryPageCount} 页 · ${start + 1}–${end} 项` : '无结果';
+    $('library-search-count').textContent = query.length
+      ? t('library.searchMatches', {matches: matches.length, total: libraryAssets.length})
+      : t('library.searchTotal', {count: matches.length});
+    $('library-page-status').textContent = matches.length
+      ? t('library.pageStatus', {page: libraryPage + 1, pages: libraryPageCount, start: start + 1, end})
+      : t('catalog.emptyResult');
     $('library-pagination').classList.toggle('hidden', matches.length <= LIBRARY_PAGE_SIZE);
     $('library-page-prev').disabled = libraryPage <= 0;
     $('library-page-next').disabled = libraryPage >= libraryPageCount - 1;
@@ -527,10 +645,10 @@
     results.innerHTML = visibleMatches.map((asset) => {
       const id = text(val(asset, 'id', 'ID'));
       const file = text(val(asset, 'file', 'File'));
-      const title = text(val(asset, 'title', 'Title'), file ? baseName(file) : '未命名 LUT');
+      const title = text(val(asset, 'title', 'Title'), file ? baseName(file) : t('lut.noName'));
       const cameras = val(asset, 'cameras', 'Cameras');
       const cameraNames = Array.isArray(cameras) ? cameras.map(cameraLabel).filter(Boolean) : [];
-      const cameraText = cameraNames.length ? [...new Set(cameraNames)].join('、') : '适用相机待确认';
+      const cameraText = cameraNames.length ? [...new Set(cameraNames)].join(i18n.language === 'en' ? ', ' : '、') : t('lut.cameraPending');
       const profile = profileLabel(val(asset, 'profile', 'Profile'));
       const look = lookLabel(val(asset, 'look', 'Look'));
       const version = assetVersionLabel(asset);
@@ -543,21 +661,22 @@
       const automatic = val(asset, 'automatic', 'Automatic') === true;
       const isAvailable = automatic && linked;
       const statusClass = isAvailable ? 'available' : automatic ? 'unlisted' : 'reference';
-      const status = isAvailable ? '自动匹配可用' : automatic ? '未列入自动清单' : '仅供查看';
+      const status = isAvailable ? t('lut.autoAvailable') : automatic ? t('lut.notAutoListed') : t('lut.reference');
       const hash = text(val(asset, 'sha256', 'SHA256'));
-      const hashLabel = hash ? `<span class="lut-hash" title="SHA-256：${esc(hash)}">SHA-256 ${esc(hash.slice(0, 12))}${hash.length > 12 ? '…' : ''}</span>` : '';
+      const hashLabel = hash ? `<span class="lut-hash" title="${esc(t('lut.shaTitle', {hash}))}">SHA-256 ${esc(hash.slice(0, 12))}${hash.length > 12 ? '…' : ''}</span>` : '';
       const sourceLabel = provenance ? `<span class="lut-source">${esc(provenance)}</span>` : '';
-      const autoLabel = automatic ? '可用于安全自动匹配，但需同时列入当前自动清单' : '不会参与批量自动还原';
-      return `<article class="lut-card"><div class="lut-card-heading"><div><h3>${esc(title)}</h3><p>${esc(cameraText)} · ${esc(profile)} · ${esc(look)}</p></div><span class="lut-availability ${statusClass}" title="${esc(autoLabel)}">${esc(status)}</span></div><div class="lut-card-meta"><span>版本 ${esc(version)}</span><span>格式 ${esc(format)}${grid ? ` · ${esc(grid)}` : ''}</span><span>输出 ${esc(output)}</span><span>用途 ${esc(purpose)}</span></div><div class="lut-card-footer"><span class="lut-file">${esc(file ? baseName(file) : '文件名未提供')}</span>${sourceLabel}${hashLabel}</div></article>`;
+      const autoLabel = automatic ? t('lut.safeAutoHint') : t('lut.notInBatch');
+      return `<article class="lut-card"><div class="lut-card-heading"><div><h3>${esc(title)}</h3><p>${esc(cameraText)} · ${esc(profile)} · ${esc(look)}</p></div><span class="lut-availability ${statusClass}" title="${esc(autoLabel)}">${esc(status)}</span></div><div class="lut-card-meta"><span>${esc(t('lut.version', {value: version}))}</span><span>${esc(t('lut.format', {value: format}))}${grid ? ` · ${esc(grid)}` : ''}</span><span>${esc(t('lut.output', {value: output}))}</span><span>${esc(t('lut.purpose', {value: purpose}))}</span></div><div class="lut-card-footer"><span class="lut-file">${esc(file ? baseName(file) : t('lut.fileNotProvided'))}</span>${sourceLabel}${hashLabel}</div></article>`;
     }).join('');
   }
-  function listLibrary(library, catalog) {
+  function listLibrary(library, catalog, preservePage = false) {
+    const previousPage = libraryPage;
     const assets = val(library, 'assets', 'Assets');
     hasCompleteLibrary = Array.isArray(assets);
     libraryAssets = hasCompleteLibrary ? assets : [];
     libraryCatalog = Array.isArray(catalog) ? catalog : [];
-    libraryPage = 0;
-    $('library-count').textContent = hasCompleteLibrary ? `${libraryAssets.length} 项` : '暂不可用';
+    libraryPage = preservePage ? previousPage : 0;
+    $('library-count').textContent = hasCompleteLibrary ? t('lut.countItems', {count: libraryAssets.length}) : t('lut.libraryUnavailable');
     $('library-fallback').classList.toggle('hidden', hasCompleteLibrary);
     $('library-empty').classList.toggle('hidden', !hasCompleteLibrary || libraryAssets.length > 0);
     $('library-search').disabled = !hasCompleteLibrary || libraryAssets.length === 0;
@@ -569,21 +688,21 @@
     const supported = Array.isArray(extensions) ? [...new Set(extensions.map((extension) => text(extension).trim()).filter(Boolean))] : [];
     if (supported.length === 0) {
       details.classList.add('hidden');
-      $('video-format-hint').textContent = '文件后缀只用于发现候选；即使是 AVC/HEVC、PCM 或 ProRes 流，也须由本机解码器实际读取后才可处理。无法处理或确认的素材会原样保留并标记待确认。';
+      $('video-format-hint').textContent = t('input.formatHint');
       list.innerHTML = '';
       return;
     }
-    $('video-format-hint').textContent = `此版本会扫描 ${supported.length} 种列出的文件后缀。后缀只用于发现候选；即使是 AVC/HEVC、PCM 或 ProRes 流，也须由本机解码器实际读取后才可处理。无法处理或确认的素材会原样保留并标记待确认。`;
-    $('supported-format-count').textContent = `查看 ${supported.length} 种支持扫描的文件后缀`;
+    $('video-format-hint').textContent = t('input.formatHintCount', {count: supported.length});
+    $('supported-format-count').textContent = t('input.formatCount', {count: supported.length});
     list.innerHTML = supported.map((extension) => `<span>${esc(extension.toUpperCase())}</span>`).join('');
     details.classList.remove('hidden');
   }
-  function renderBootstrapResources(bootstrap) {
+  function renderBootstrapResources(bootstrap, preservePages = false) {
     const library = val(bootstrap, 'library', 'Library');
     const catalog = val(bootstrap, 'catalog', 'Catalog') || [];
     indexLibraryCameraNames(library);
-    listCatalog(catalog, library);
-    listLibrary(library, catalog);
+    listCatalog(catalog, library, preservePages);
+    listLibrary(library, catalog, preservePages);
     renderSupportedFormats(val(bootstrap, 'supported_video_extensions', 'SupportedVideoExtensions'));
   }
   $('library-search').addEventListener('input', () => {
@@ -597,31 +716,31 @@
     if (/^d[- ]?log$/i.test(gamma)) return 'D-Log';
     if (gamma) return gamma;
     const profile = val(item, 'profile', 'Profile');
-    return profile ? profileLabel(profile) : '未识别';
+    return profile ? profileLabel(profile) : t('lut.unrecognized');
   }
   function modeClass(item) {
     const mode = modeLabel(item);
-    if (mode === '未识别' || /unknown|unsupported|missing|conflict/i.test(mode)) return 'unknown';
+    if (/unrecognized|未识别|unknown|unsupported|missing|conflict/i.test(mode)) return 'unknown';
     if (/hdr|hlg|pq/i.test(mode)) return 'hdr';
     return '';
   }
   function actionLabel(item, preview = false) {
     const action = text(val(item, 'action', 'Action')).toLowerCase();
     const status = text(val(item, 'status', 'Status')).toLowerCase();
-    if (action === 'encode' || status === 'planned_encode' || status === 'encoded') return preview ? '计划套用 LUT' : '套用 LUT';
-    if (action === 'copy') return status === 'copied_needs_review' ? (preview ? '原样复制 · 待确认' : '已原样复制 · 待确认') : preview ? '原样复制' : '复制原片';
-    return text(val(item, 'action', 'Action'), '待确认');
+    if (action === 'encode' || status === 'planned_encode' || status === 'encoded') return preview ? t('action.planApplyLut') : t('action.applyLut');
+    if (action === 'copy') return status === 'copied_needs_review' ? (preview ? t('action.copyReview') : t('action.copiedReview')) : preview ? t('action.copy') : t('action.copySource');
+    return text(val(item, 'action', 'Action'), t('action.review'));
   }
   function statusLabel(item) {
     const status = text(val(item, 'status', 'Status')).toLowerCase();
-    if (status === 'skipped_existing') return val(item, 'needs_review') ? '已跳过 · 待确认' : '已跳过 · 已验证';
+    if (status === 'skipped_existing') return val(item, 'needs_review') ? t('status.skippedReview') : t('status.skippedVerified');
     const labels = {
-      planned_encode:'待处理 · 套用 LUT', planned_copy:'待处理 · 原样复制',
-      copied_nonlog:'已复制 · 普通色彩', copied_hdr:'已复制 · HDR', copied_needs_review:'已复制 · 待确认',
-      encoded:'已还原', skipped_existing:'已跳过', failed:'失败', cancelled:'已取消',
-      running:'正在处理', started:'正在处理', pending:'等待处理', done:'已完成'
+      planned_encode:t('status.plannedEncode'), planned_copy:t('status.plannedCopy'),
+      copied_nonlog:t('status.copiedNonLog'), copied_hdr:t('status.copiedHdr'), copied_needs_review:t('status.copiedReview'),
+      encoded:t('status.restored'), skipped_existing:t('status.skipped'), failed:t('status.failed'), cancelled:t('status.cancelled'),
+      running:t('status.running'), started:t('status.running'), pending:t('progress.waiting'), done:t('status.complete')
     };
-    return labels[status] || text(val(item, 'status', 'Status'), '待处理');
+    return labels[status] || text(val(item, 'status', 'Status'), t('status.pending'));
   }
   function statusClass(item) {
     const status = text(val(item, 'status', 'Status')).toLowerCase();
@@ -644,60 +763,60 @@
     const name = lutDisplayName(item);
     if (name) return name;
     const reason = text(val(item, 'reason', 'Reason'));
-    if (/no LUT configured/i.test(reason)) return /look=vivid/i.test(reason) ? '无对应鲜艳 LUT' : '无对应标准 LUT';
-    if (/vivid|鲜艳/i.test(reason) && /missing|not available|unavailable|缺少|没有|不可用/i.test(reason)) return '无对应 Vivid LUT';
-    return '未使用 LUT';
+    if (/no LUT configured/i.test(reason)) return /look=vivid/i.test(reason) ? t('lut.noVivid') : t('lut.noStandard');
+    if (/vivid|鲜艳/i.test(reason) && /missing|not available|unavailable|缺少|没有|不可用/i.test(reason)) return t('lut.noVivid');
+    return t('lut.none');
   }
   function runLutName(item) {
     const name = lutDisplayName(item);
     const status = text(val(item, 'status', 'Status')).toLowerCase();
-    if (status === 'encoded') return `已应用：${name || 'LUT 信息缺失'}`;
+    if (status === 'encoded') return t('lut.applied', {name: name || t('lut.missingInfo')});
     if (status === 'skipped_existing') {
-      if (val(item, 'output_verified', 'OutputVerified')) return name ? `已验证已有结果：${name}` : '已验证已有结果：未使用 LUT';
-      return name ? `未验证 · 候选：${name}` : '已有输出 · LUT 未验证';
+      if (val(item, 'output_verified', 'OutputVerified')) return name ? t('lut.verifiedExisting', {name}) : t('lut.verifiedExistingNoLut');
+      return name ? t('lut.unverifiedCandidate', {name}) : t('lut.outputNotVerified');
     }
-    if (name) return `未应用 · 候选：${name}`;
-    return '未使用 LUT';
+    if (name) return t('lut.notAppliedCandidate', {name});
+    return t('lut.none');
   }
   function previewLutName(item) {
     const name = lutDisplayName(item);
     const action = text(val(item, 'action', 'Action')).toLowerCase();
-    if ((action === 'encode' || text(val(item, 'status', 'Status')).toLowerCase() === 'planned_encode') && name) return `将使用：${name}`;
-    if (name) return `未应用 · 候选：${name}`;
+    if ((action === 'encode' || text(val(item, 'status', 'Status')).toLowerCase() === 'planned_encode') && name) return t('lut.willUse', {name});
+    if (name) return t('lut.notAppliedCandidate', {name});
     return lutName(item);
   }
   function reasonText(item, preview = false) {
     const reason = text(val(item, 'reason', 'Reason'));
-    if (!reason) return '—';
+    if (!reason) return t('generic.dash');
     const waiting = preview || ['pending', 'running', 'planned_copy', 'planned_encode'].includes(text(val(item, 'status', 'Status')).toLowerCase());
-    const reviewOutcome = waiting ? '计划原样复制并标记待确认。' : '已原样复制并标记待确认。';
-    if (/VideoToolbox failed; x265 fallback succeeded/i.test(reason)) return '硬件编码失败，已自动改用 x265 完成还原；详细原因见日志与报告。';
-    if (/output exists; source and LUT\/look match the previously verified result/i.test(reason)) return '源片、LUT 配置和已有输出的哈希均通过核验，沿用已有结果。';
-    if (/output exists; preserved because no matching prior report/i.test(reason)) return '已有输出缺少可核验的历史记录，已保留并标记待确认。';
-    if (/output exists; preserved because source or LUT\/look configuration differs/i.test(reason)) return '已有输出与当前源片或 LUT 配置不同，已保留并标记待确认。';
-    if (/output exists; preserved because its contents differ/i.test(reason)) return '已有输出内容与历史校验不一致，已保留并标记待确认。';
-    if (/output exists; preserved because it could not be verified/i.test(reason)) return '已有输出无法完成核验，已保留并标记待确认。';
-    if (/exact DJI gamma metadata, camera evidence, and matching LUT/i.test(reason)) return '拍摄模式、相机与对应 LUT 均已匹配。';
-    if (/missing exact .*ColorGammaSxS/i.test(reason)) return `缺少明确的拍摄模式元数据；${reviewOutcome}`;
-    if (/explicit Normal\/Rec\.709 allowlist/i.test(reason)) return '元数据标记为普通色彩，无需套用 LUT。';
-    if (/explicitly identifies HDR/i.test(reason)) return '元数据标记为 HDR，无需套用本次 LUT。';
-    if (/unsupported gamma tag/i.test(reason)) return `拍摄模式暂不支持或无法确认；${reviewOutcome}`;
-    if (/conflicting .*ColorGammaSxS values/i.test(reason)) return `视频内的拍摄模式标记存在冲突；${reviewOutcome}`;
-    if (/camera model and encoder metadata conflict/i.test(reason)) return `相机型号与编码器信息不一致；${reviewOutcome}`;
-    if (/camera identity is unknown|camera model and encoder metadata are missing/i.test(reason)) return `无法从元数据确认相机型号；${reviewOutcome}`;
+    const reviewOutcome = waiting ? t('reason.reviewPlanned') : t('reason.reviewCopied');
+    if (/VideoToolbox failed; x265 fallback succeeded/i.test(reason)) return t('reason.hardwareFallback');
+    if (/output exists; source and LUT\/look match the previously verified result/i.test(reason)) return t('reason.verifiedExisting');
+    if (/output exists; preserved because no matching prior report/i.test(reason)) return t('reason.noPriorReport');
+    if (/output exists; preserved because source or LUT\/look configuration differs/i.test(reason)) return t('reason.configDiffers');
+    if (/output exists; preserved because its contents differ/i.test(reason)) return t('reason.outputDiffers');
+    if (/output exists; preserved because it could not be verified/i.test(reason)) return t('reason.outputUnverified');
+    if (/exact DJI gamma metadata, camera evidence, and matching LUT/i.test(reason)) return t('reason.matchFound');
+    if (/missing exact .*ColorGammaSxS/i.test(reason)) return t('reason.missingMetadata', {outcome: reviewOutcome});
+    if (/explicit Normal\/Rec\.709 allowlist/i.test(reason)) return t('reason.normal');
+    if (/explicitly identifies HDR/i.test(reason)) return t('reason.hdr');
+    if (/unsupported gamma tag/i.test(reason)) return t('reason.unsupportedGamma', {outcome: reviewOutcome});
+    if (/conflicting .*ColorGammaSxS values/i.test(reason)) return t('reason.conflictingGamma', {outcome: reviewOutcome});
+    if (/camera model and encoder metadata conflict/i.test(reason)) return t('reason.cameraConflict', {outcome: reviewOutcome});
+    if (/camera identity is unknown|camera model and encoder metadata are missing/i.test(reason)) return t('reason.unknownCamera', {outcome: reviewOutcome});
     if (/no LUT configured for camera=([^\s;]+) profile=([^\s;]+) look=([^\s;]+)/i.test(reason)) {
       const match = reason.match(/no LUT configured for camera=([^\s;]+) profile=([^\s;]+) look=([^\s;]+)/i);
-      return `没有相机 ${cameraLabel(match[1])}、${profileLabel(match[2])} 的${match[3] === 'vivid' ? '鲜艳' : '标准'} LUT；${reviewOutcome}`;
+      return t('reason.noLut', {camera: cameraLabel(match[1]), profile: profileLabel(match[2]), look: match[3] === 'vivid' ? t('reason.vivid') : t('reason.standard'), outcome: reviewOutcome});
     }
-    if (/matching LUT is unavailable or invalid/i.test(reason)) return `对应 LUT 缺失或校验失败；${reviewOutcome}`;
-    if (/ffprobe could not classify/i.test(reason)) return `无法读取视频元数据；${reviewOutcome}`;
-    if (/color_(range|space).*copied for review/i.test(reason)) return `视频色彩范围或矩阵信息不完整；${reviewOutcome}`;
-    return reason;
+    if (/matching LUT is unavailable or invalid/i.test(reason)) return t('reason.lutInvalid', {outcome: reviewOutcome});
+    if (/ffprobe could not classify/i.test(reason)) return t('reason.probeFailed', {outcome: reviewOutcome});
+    if (/color_(range|space).*copied for review/i.test(reason)) return t('reason.colorMetadata', {outcome: reviewOutcome});
+    return t('api.technicalDetails', {details: reason});
   }
   function detailButton(item, preview, index) {
     const source = preview ? 'preview' : 'progress';
     const fileName = baseName(val(item, 'input', 'Input'));
-    return `<button class="row-detail-button" type="button" data-detail-source="${source}" data-detail-index="${index}" aria-haspopup="dialog" aria-label="查看 ${esc(fileName)} 的详细信息">详情</button>`;
+    return `<button class="row-detail-button" type="button" data-detail-source="${source}" data-detail-index="${index}" aria-haspopup="dialog" aria-label="${esc(t('detail.lookupDetails', {file: fileName}))}">${esc(t('action.details'))}</button>`;
   }
   function itemRow(item, preview, index) {
     const input = text(val(item, 'input', 'Input'));
@@ -709,45 +828,54 @@
     const file = `<span class="file-name" title="${esc(baseName(input))}">${esc(baseName(input))}</span><span class="path-sub" title="${esc(input)}">${esc(input)}</span>`;
     const modeCell = `<span class="mode-tag ${modeClass(item)}">${esc(mode)}</span>`;
     if (preview) {
-      return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(previewLutName(item))}</span></td><td>${esc(actionLabel(item, true))}</td><td title="${esc(rawReason || reason)}"><div class="row-detail-line"><span class="row-summary-reason">${esc(reason)}</span>${detailButton(item, true, index)}</div></td></tr>`;
+      const title = rawReason ? localizedError({message: rawReason}) : reason;
+      return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(previewLutName(item))}</span></td><td>${esc(actionLabel(item, true))}</td><td title="${esc(title)}"><div class="row-detail-line"><span class="row-summary-reason">${esc(reason)}</span>${detailButton(item, true, index)}</div></td></tr>`;
     }
-    const progressReason = text(val(item, 'error', 'Error'), reason);
-    return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(runLutName(item))}</span></td><td><span class="status-tag ${statusClass(item)}">${esc(statusLabel(item))}</span></td><td class="progress-cell"><progress class="mini-progress" max="100" value="${percent}" aria-label="${esc(baseName(input))}进度"></progress>${percent ? `${Math.round(percent)}%` : '—'}</td><td title="${esc(rawReason || progressReason)}"><div class="row-detail-line"><span class="row-summary-reason">${esc(progressReason)}</span>${detailButton(item, false, index)}</div></td></tr>`;
+    const rawProgressReason = text(val(item, 'error', 'Error'));
+    const progressReason = rawProgressReason ? localizedError({message: rawProgressReason}) : reason;
+    const rawTitle = rawReason || rawProgressReason;
+    const title = rawTitle ? localizedError({message: rawTitle}) : reason;
+    return `<tr><td>${file}</td><td>${modeCell}</td><td>${esc(camera)}</td><td><span class="lut-name">${esc(runLutName(item))}</span></td><td><span class="status-tag ${statusClass(item)}">${esc(statusLabel(item))}</span></td><td class="progress-cell"><progress class="mini-progress" max="100" value="${percent}" aria-label="${esc(t('progress.percent', {file: baseName(input)}))}"></progress>${percent ? `${Math.round(percent)}%` : t('generic.dash')}</td><td title="${esc(title)}"><div class="row-detail-line"><span class="row-summary-reason">${esc(progressReason)}</span>${detailButton(item, false, index)}</div></td></tr>`;
   }
   function detailValue(value) {
-    if (Array.isArray(value)) return value.map((entry) => text(entry)).join('、');
+    if (Array.isArray(value)) return value.map((entry) => text(entry)).join(i18n.language === 'en' ? ', ' : '、');
     if (value && typeof value === 'object') return JSON.stringify(value, null, 2);
     return text(value);
   }
-  function showItemDetails(item, preview, opener) {
+  function renderItemDetails(item, preview) {
     if (!item) return;
     const input = text(val(item, 'input', 'Input'));
     const rawReason = text(val(item, 'reason', 'Reason'));
     const reason = reasonText(item, preview);
     const details = [
-      ['文件', input],
-      ['相机', cameraLabel(val(item, 'camera', 'Camera'))],
-      ['拍摄模式', modeLabel(item)],
-      ['源 Gamma', val(item, 'source_gamma', 'SourceGamma', 'gamma', 'Gamma')],
-      ['识别 Profile', val(item, 'profile', 'Profile')],
-      [preview ? '计划操作' : '处理状态', preview ? actionLabel(item, true) : statusLabel(item)],
-      [preview ? '计划 LUT' : 'LUT 结果 / 候选', preview ? previewLutName(item) : runLutName(item)],
-      ['LUT 文件', val(item, 'lut_file', 'LUTFile')],
-      ['LUT 版本', val(item, 'lut_version', 'LUTVersion')],
+      [t('detail.file'), input],
+      [t('detail.camera'), cameraLabel(val(item, 'camera', 'Camera'))],
+      [t('detail.mode'), modeLabel(item)],
+      [t('detail.sourceGamma'), val(item, 'source_gamma', 'SourceGamma', 'gamma', 'Gamma')],
+      [t('detail.profile'), val(item, 'profile', 'Profile')],
+      [preview ? t('detail.planAction') : t('detail.status'), preview ? actionLabel(item, true) : statusLabel(item)],
+      [preview ? t('detail.planLut') : t('detail.lutResult'), preview ? previewLutName(item) : runLutName(item)],
+      [t('detail.lutFile'), val(item, 'lut_file', 'LUTFile')],
+      [t('detail.lutVersion'), val(item, 'lut_version', 'LUTVersion')],
       ['LUT SHA-256', val(item, 'lut_sha256', 'LUTSHA256')],
-      ['编码器', val(item, 'encoder', 'Encoder')],
-      ['说明', reason],
-      ['原始说明', rawReason && rawReason !== reason ? rawReason : undefined],
-      ['错误', val(item, 'error', 'Error')],
-      ['结果文件', val(item, 'output', 'Output', 'output_path', 'OutputPath')],
-      ['已有结果核验', val(item, 'output_verified', 'OutputVerified') === true ? '已验证' : undefined],
-      ['输入 SHA-256', val(item, 'input_sha256', 'InputSHA256')],
-      ['结果 SHA-256', val(item, 'output_sha256', 'OutputSHA256')],
-      ['源视频元数据', val(item, 'source_metadata', 'SourceMetadata')],
-      ['当前进度', val(item, 'percent', 'Percent') === undefined ? undefined : `${Math.round(Number(val(item, 'percent', 'Percent')) || 0)}%`]
+      [t('detail.encoder'), val(item, 'encoder', 'Encoder')],
+      [t('detail.description'), reason],
+      [t('detail.rawDescription'), rawReason && rawReason !== reason ? localizedError({message: rawReason}) : undefined],
+      [t('detail.error'), val(item, 'error', 'Error') ? localizedError({message: val(item, 'error', 'Error')}) : undefined],
+      [t('detail.outputFile'), val(item, 'output', 'Output', 'output_path', 'OutputPath')],
+      [t('detail.outputVerified'), val(item, 'output_verified', 'OutputVerified') === true ? t('detail.verified') : undefined],
+      [t('detail.inputHash'), val(item, 'input_sha256', 'InputSHA256')],
+      [t('detail.outputHash'), val(item, 'output_sha256', 'OutputSHA256')],
+      [t('detail.sourceMetadata'), val(item, 'source_metadata', 'SourceMetadata')],
+      [t('detail.currentProgress'), val(item, 'percent', 'Percent') === undefined ? undefined : `${Math.round(Number(val(item, 'percent', 'Percent')) || 0)}%`]
     ].filter(([, value]) => value !== undefined && value !== '');
-    $('file-detail-title').textContent = baseName(input) || '视频详情';
+    $('file-detail-title').textContent = baseName(input) || t('detail.video');
     $('file-detail-content').innerHTML = `<dl>${details.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(detailValue(value))}</dd>`).join('')}</dl>`;
+  }
+  function showItemDetails(item, preview, opener) {
+    if (!item) return;
+    currentDetail = {item, preview};
+    renderItemDetails(item, preview);
     openAppDialog($('file-detail-dialog'), opener);
   }
   function willEncode(item) {
@@ -760,7 +888,7 @@
     return Boolean(val(item, 'needs_review', 'NeedsReview')) || status.includes('review');
   }
   function updateVideoPager(prefix, items, page, totalPages) {
-    $(`${prefix}-page-status`).textContent = `第 ${page + 1} / ${totalPages} 页 · ${items.length} 个视频`;
+    $(`${prefix}-page-status`).textContent = t('progress.page', {page: page + 1, pages: totalPages, count: items.length});
     $(`${prefix}-pagination`).classList.toggle('hidden', items.length <= ROW_PAGE_SIZE);
     $(`${prefix}-page-prev`).disabled = page <= 0;
     $(`${prefix}-page-next`).disabled = page >= totalPages - 1;
@@ -785,7 +913,7 @@
     $('progress-empty').classList.toggle('hidden', progressItems.length > 0);
     updateVideoPager('progress', progressItems, progressPage, progressPageCount);
   }
-  function renderPlan(plan) {
+  function renderPlan(plan, preservePage = false, preserveView = false) {
     const candidateItems = val(plan, 'items', 'Items');
     const items = Array.isArray(candidateItems) ? candidateItems : [];
     const input = text(val(plan, 'input_root', 'inputRoot', 'InputRoot'), settings().input);
@@ -795,27 +923,77 @@
     const restoreCount = items.filter(willEncode).length;
     const copyCount = Math.max(0, items.length - restoreCount);
     const reviewCount = items.filter((item) => !willEncode(item) && needsReview(item)).length;
-    $('run-settings').innerHTML = `<span class="setting-chip" title="原片：${esc(input)}">原片：${esc(input)}</span><span class="setting-chip" title="最终保存位置：${esc(output)}">最终保存位置：${esc(output)}</span><span class="setting-chip">风格：${look === 'vivid' ? '鲜艳' : '标准'}</span><span class="setting-chip">子目录：${recursive ? '包含' : '不包含'}</span>`;
-    $('preview-count').textContent = `${items.length} 个视频`;
+    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
+    $('preview-count').textContent = t('video.count', {count: items.length});
     $('preview-restore-count').textContent = restoreCount;
     $('preview-copy-count').textContent = copyCount;
     $('preview-review-count').textContent = reviewCount;
     previewItems = items;
-    previewPage = 0;
+    currentPlan = plan;
+    if (!preservePage) previewPage = 0;
     previewPageAvailable = true;
     renderPreviewPage();
     $('preview-stale').classList.add('hidden');
     $('preview-section').classList.remove('hidden');
     hasPreview = items.length > 0;
     previewSnapshot = JSON.stringify(settings());
-    if (!hasPreview) showMessage('没有找到可处理的视频；请检查路径或扫描选项。');
-    setGuidedStep('preview');
+    if (!hasPreview && !preserveView) showMessage(t('state.fileNotFound'));
+    if (!preserveView) setGuidedStep('preview');
     syncControls();
-    if (interfaceMode === 'classic') $('preview-section').scrollIntoView({behavior:'smooth', block:'start'});
+    if (!preserveView && interfaceMode === 'classic') $('preview-section').scrollIntoView({behavior:'smooth', block:'start'});
   }
 
   function summaryCard(label, value, cls = '') {
     return `<div class="summary-card ${cls}"><span>${esc(label)}</span><b>${Number(value) || 0}</b></div>`;
+  }
+  function localizeLog(value) {
+    const line = text(value).trim();
+    const fixed = new Map([
+      ['已取消批量处理。', 'log.batchCancelled'],
+      ['处理完成。', 'log.processingComplete'],
+      ['开始批量处理。', 'log.batchStarting'],
+      ['正在停止批量处理。', 'log.batchStopping'],
+      ['批量处理完成。', 'log.batchComplete'],
+      ['还原完成', 'log.restored'],
+      ['复制完成', 'log.copied'],
+      ['待确认素材已复制', 'log.reviewCopied'],
+      ['跳过已有文件', 'log.skipped'],
+      ['处理失败', 'log.failed'],
+      ['Scanning complete; processing files', 'engineLog.scanning'],
+      ['Scanning cancelled', 'engineLog.scanCancelled'],
+      ['No videos found', 'engineLog.noVideos'],
+      ['Processing cancelled', 'engineLog.processingCancelled'],
+      ['Processing complete', 'engineLog.processingComplete'],
+      ['Encoding and validation complete', 'engineLog.encodingComplete']
+    ]);
+    const exactKey = fixed.get(line);
+    if (exactKey) return t(exactKey);
+    let match = line.match(/^扫描完成：(.+)，共发现 (\d+) 个视频。$/);
+    if (match) return t('log.scanComplete', {path: match[1], count: match[2]});
+    match = line.match(/^开始处理 (\d+) 个视频，输出到 (.+)。$/);
+    if (match) return t('log.batchStarted', {count: match[1], path: match[2]});
+    match = line.match(/^批量处理失败：(.+)$/s);
+    if (match) return t('log.batchFailed', {details: localizeErrorText(match[1])});
+    match = line.match(/^正在处理：(.+)$/);
+    if (match) return t('log.processing', {path: match[1]});
+    match = line.match(/^文件处理结束：(.+)$/);
+    if (match) return t('log.fileFinished', {path: match[1]});
+    match = line.match(/^(.+?)：(.+)（(.*)）$/);
+    if (match) {
+      const labels = {
+        '还原完成': t('log.restored'), '复制完成': t('log.copied'),
+        '待确认素材已复制': t('log.reviewCopied'), '跳过已有文件': t('log.skipped'),
+        '处理失败': t('log.failed')
+      };
+      if (labels[match[1]]) return t('log.fileStatus', {status: labels[match[1]], path: match[2], lut: match[3]});
+    }
+    const known = i18n.translateKnownMessage(line);
+    if (known) return known;
+    return line ? t('api.technicalDetails', {details: line}) : '';
+  }
+  function localizeErrorText(value) {
+    const known = i18n.translateKnownMessage(value);
+    return known || t('api.technicalDetails', {details: value});
   }
   function renderState(state) {
     const running = Boolean(val(state, 'running', 'Running'));
@@ -845,23 +1023,23 @@
     const completed = Number(val(state, 'completed', 'Completed')) || 0;
     const total = Number(val(state, 'total', 'Total')) || items.length;
     const currentPercent = Number(val(state, 'percent', 'Percent', 'overall_percent', 'overallPercent')) || (total ? completed / total * 100 : 0);
-    $('progress-title').textContent = running ? '正在还原' : finished ? '批次已结束' : '处理状态';
+    $('progress-title').textContent = running ? t('section.runningTitle') : finished ? t('status.batchEnded') : t('section.progressTitle');
     const stateBadge = $('run-state');
     stateBadge.className = `state-badge ${running ? 'running' : cancelled ? 'cancelled' : finished ? 'complete' : 'running'}`;
-    stateBadge.innerHTML = `<i></i> ${running ? '正在处理' : cancelled ? '已取消' : finished ? '已结束' : '准备中'}`;
-    $('progress-caption').textContent = text(val(state, 'current_file', 'currentFile', 'CurrentFile'), running ? '正在准备任务…' : finished ? '处理已结束' : '等待处理');
-    $('progress-numbers').textContent = `${completed} / ${total}`;
+    stateBadge.innerHTML = `<i></i> ${running ? t('status.running') : cancelled ? t('status.cancelled') : finished ? t('status.finished') : t('progress.preparing')}`;
+    $('progress-caption').textContent = text(val(state, 'current_file', 'currentFile', 'CurrentFile'), running ? t('progress.preparingTask') : finished ? t('progress.finished') : t('progress.waiting'));
+    $('progress-numbers').textContent = t('progress.current', {completed, total});
     $('progress-fill').value = Math.max(0, Math.min(100, currentPercent));
     $('summary-grid').innerHTML = [
-      summaryCard('套用 LUT', val(summary,'encoded','Encoded')),
-      summaryCard('原样复制', val(summary,'copied','Copied')),
-      summaryCard('待确认', val(summary,'needs_review','needsReview','NeedsReview'), 'review'),
-      summaryCard('已跳过', val(summary,'skipped','Skipped')),
-      summaryCard('失败', val(summary,'failed','Failed'), 'failed')
+      summaryCard(t('summary.restoreLut'), val(summary,'encoded','Encoded')),
+      summaryCard(t('summary.copy'), val(summary,'copied','Copied')),
+      summaryCard(t('summary.needsReview'), val(summary,'needs_review','needsReview','NeedsReview'), 'review'),
+      summaryCard(t('summary.skipped'), val(summary,'skipped','Skipped')),
+      summaryCard(t('summary.failed'), val(summary,'failed','Failed'), 'failed')
     ].join('');
     renderProgressPage();
     const logs = val(state, 'logs', 'Logs') || [];
-    $('log-list').innerHTML = logs.map((entry) => `<div class="log-entry">${esc(typeof entry === 'string' ? entry : text(val(entry,'message','Message')))}</div>`).join('');
+    $('log-list').innerHTML = logs.map((entry) => `<div class="log-entry">${esc(localizeLog(typeof entry === 'string' ? entry : text(val(entry,'message','Message'))))}</div>`).join('');
     $('cancel-button').disabled = !running || !connected;
     if (terminal) {
       $('complete-actions').classList.remove('hidden');
@@ -869,16 +1047,17 @@
       const copiedCount = Number(val(summary,'copied','Copied')) || 0;
       const reviewCount = Number(val(summary,'needs_review','needsReview','NeedsReview')) || 0;
       const failedCount = Number(val(summary,'failed','Failed')) || 0;
-      const counts = `套用 LUT ${encodedCount} 个，复制 ${copiedCount} 个，待确认 ${reviewCount} 个，失败 ${failedCount} 个。`;
-      const ending = cancelled ? '任务已取消。' : failedCount ? '批次结束，部分文件失败。' : reviewCount ? '批次结束，仍有文件待确认。' : '批次处理完成。';
+      const counts = t('status.batchCounts', {encoded: encodedCount, copied: copiedCount, review: reviewCount, failed: failedCount});
+      const ending = cancelled ? t('complete.batchCancelled') : failedCount ? t('complete.batchFailed') : reviewCount ? t('complete.needsReview') : t('complete.success');
       const completeMessage = text(stateError, `${ending}${counts}`);
-      $('complete-message').textContent = completeMessage;
-      if (!shuttingDown && activeOperation !== 'picker') showMessage(completeMessage);
-      if (connected) $('footer-status').textContent = cancelled ? '任务已取消' : '处理已结束';
+      const displayedCompleteMessage = stateError ? localizedError({message: stateError}) : completeMessage;
+      $('complete-message').textContent = displayedCompleteMessage;
+      if (!shuttingDown && activeOperation !== 'picker') showMessage(displayedCompleteMessage);
+      if (connected) $('footer-status').textContent = cancelled ? t('status.taskCancelled') : t('progress.finished');
     } else {
       $('complete-actions').classList.add('hidden');
-      if (running && !shuttingDown && activeOperation !== 'picker') showMessage('正在还原，请在下方查看进度。');
-      if (connected) $('footer-status').textContent = running ? '正在处理文件…' : '本机服务已就绪';
+      if (running && !shuttingDown && activeOperation !== 'picker') showMessage(t('status.processingHint'));
+      if (connected) $('footer-status').textContent = running ? t('status.processingFiles') : t('state.localReady');
     }
     syncControls();
   }
@@ -898,7 +1077,7 @@
       if (running && !batchLocked) ensureStatePolling();
       else if (!running && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     } catch (error) {
-      if (!shuttingDown && activeOperation !== 'picker') showMessage(error.message);
+      if (!shuttingDown && activeOperation !== 'picker') showMessage(localizedError(error));
       if (pollTimer && !processing) { clearInterval(pollTimer); pollTimer = null; }
     }
   }
@@ -907,27 +1086,28 @@
     if (operationBusy() || batchLocked || !connected) return;
     const path = target === 'input' ? inputPath.value.trim() : outputPath.value.trim() || outputBase();
     beginOperation('picker');
-    showMessage(target === 'input' ? '正在打开原片文件夹选择器…' : '正在打开结果目录选择器…');
+    showMessage(target === 'input' ? t('state.folderPickerInput') : t('state.folderPickerOutput'));
     try {
-      const result = await api('/api/select-folder', {method:'POST', body:JSON.stringify({target, path})});
+      const request = {target, path, ...(!isDesktop ? {language: i18n.language} : {})};
+      const result = await api('/api/select-folder', {method:'POST', body:JSON.stringify(request)});
       if (shuttingDown) return;
       if (Boolean(val(result, 'cancelled', 'Cancelled'))) {
-        showMessage('已取消选择，原路径保持不变。');
+        showMessage(t('state.selectionCancelled'));
         return;
       }
       const chosen = text(val(result, 'path', 'Path')).trim();
-      if (!chosen) throw new Error('文件夹选择器没有返回目录路径。');
+      if (!chosen) throw new Error(t('errors.folderNotSelected'));
       const currentPath = target === 'input' ? inputPath.value.trim() : outputPath.value.trim() || outputBase();
       if (sameDirectory(chosen, currentPath)) {
-        showMessage(hasPreview ? '路径未改变，现有预览仍有效。' : '路径未改变；需要处理时请重新扫描并预览。');
+        showMessage(t(hasPreview ? 'state.pathUnchangedPreview' : 'state.pathUnchangedRescan'));
         return;
       }
       if (target === 'input') inputPath.value = chosen;
       else outputPath.value = chosen;
       invalidatePreview();
-      showMessage('文件夹已更新，请重新扫描并预览。');
+      showMessage(t('state.folderUpdated'));
     } catch (error) {
-      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+      if (!shuttingDown) { const message = localizedError(error); showMessage(message); toast(message); }
     } finally {
       endOperation('picker');
     }
@@ -936,18 +1116,19 @@
   async function reconnect() {
     if (operationBusy() || (!isDesktop && !token)) return;
     beginOperation('reconnect');
-    showMessage('正在重新连接本机服务…');
+    showMessage(t('state.reconnecting'));
     try {
       const boot = await api('/api/bootstrap');
       if (shuttingDown) return;
+      latestBootstrap = boot;
       renderBootstrapResources(boot);
       if (stateRecoveryEnabled) await refreshState({recover:true});
       if (connected && !shuttingDown) {
-        $('footer-status').textContent = processing ? '正在处理文件…' : '本机服务已就绪';
-        if (!batchLocked) showMessage('已重新连接，可以继续操作。');
+        $('footer-status').textContent = processing ? t('status.processingFiles') : t(isDesktop ? 'connection.desktopReady' : 'state.localReady');
+        if (!batchLocked) showMessage(t('state.reconnected'));
       }
     } catch (error) {
-      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+      if (!shuttingDown) { const message = localizedError(error); showMessage(message); toast(message); }
     } finally {
       endOperation('reconnect');
     }
@@ -956,10 +1137,11 @@
   async function scanPreview() {
     if (operationBusy() || batchLocked || !connected) return;
     const request = settings();
-    if (!request.input) { showMessage('请填写原片文件夹路径。'); inputPath.focus(); return; }
+    if (!request.input) { showMessage(t('state.inputRequired')); inputPath.focus(); return; }
     stateRecoveryEnabled = false;
     hasPreview = false;
     previewSnapshot = '';
+    currentPlan = null;
     previewItems = [];
     previewPage = 0;
     previewPageAvailable = false;
@@ -968,14 +1150,14 @@
     $('preview-section').classList.add('hidden');
     setGuidedStep('settings');
     beginOperation('preview');
-    showMessage('正在扫描和读取视频元数据…');
+    showMessage(t('state.scanning'));
     try {
       const plan = await api('/api/preview', {method:'POST', body:JSON.stringify(request)});
       if (shuttingDown) return;
       renderPlan(val(plan,'plan','Plan') || plan);
-      showMessage(hasPreview ? '预览已就绪，请确认每个文件的处理方式。' : '没有找到可处理的视频；请检查路径或扫描选项。');
+      showMessage(t(hasPreview ? 'state.previewReady' : 'state.fileNotFound'));
     } catch (error) {
-      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+      if (!shuttingDown) { const message = localizedError(error); showMessage(message); toast(message); }
     } finally {
       endOperation('preview');
     }
@@ -988,7 +1170,7 @@
     beginOperation('starting');
     terminalResultPresented = false;
     stateRecoveryEnabled = true;
-    showMessage('正在启动还原任务…');
+    showMessage(t('state.startingRun'));
     try {
       const state = await api('/api/run', {method:'POST', body:JSON.stringify(settings())});
       if (shuttingDown) return;
@@ -997,7 +1179,7 @@
       if (interfaceMode === 'classic') $('progress-section').scrollIntoView({behavior:'smooth', block:'start'});
     } catch (error) {
       if (!shuttingDown && !processing && !batchLocked) setGuidedStep('preview');
-      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+      if (!shuttingDown) { const message = localizedError(error); showMessage(message); toast(message); }
     } finally {
       endOperation('starting');
     }
@@ -1009,6 +1191,7 @@
     stateRecoveryEnabled = false;
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     currentState = null;
+    currentPlan = null;
     processing = false;
     batchLocked = false;
     hasPreview = false;
@@ -1031,7 +1214,7 @@
     $('log-list').innerHTML = '';
     renderPreviewPage();
     renderProgressPage();
-    showMessage('新批次已开始；请先扫描并预览，再开始还原。');
+    showMessage(t('state.newBatch'));
     updateGuidedPage();
     syncControls();
     window.scrollTo({top:0, behavior:'smooth'});
@@ -1040,13 +1223,13 @@
     if (!processing || cancelPending) return;
     cancelPending = true;
     syncControls();
-    try { await api('/api/cancel', {method:'POST', body:'{}'}); toast('已发送取消请求，正在安全停止当前文件…'); }
-    catch (error) { toast(error.message); }
+    try { await api('/api/cancel', {method:'POST', body:'{}'}); toast(t('state.cancelRequested')); }
+    catch (error) { toast(localizedError(error)); }
     finally { cancelPending = false; syncControls(); }
   });
   $('open-output-button').addEventListener('click', async () => {
-    try { await api('/api/open-output', {method:'POST', body:'{}'}); toast('已打开结果文件夹。'); }
-    catch (error) { toast(error.message); }
+    try { await api('/api/open-output', {method:'POST', body:'{}'}); toast(t('state.outputOpened')); }
+    catch (error) { toast(localizedError(error)); }
   });
   $('report-button').addEventListener('click', async () => {
     if (!isDesktop) {
@@ -1063,21 +1246,21 @@
     if (operationBusy() || !connected || exportPending) return;
     exportPending = true;
     beginOperation('export-report');
-    showMessage('正在导出处理报告…');
+    showMessage(t('state.exporting'));
     try {
       const result = await api('/api/export-report', {method:'POST', body:'{}'});
       if (shuttingDown) return;
       if (Boolean(val(result, 'cancelled', 'Cancelled'))) {
-        showMessage('已取消导出处理报告。');
-        toast('已取消导出处理报告。');
+        showMessage(t('state.exportCancelled'));
+        toast(t('state.exportCancelled'));
         return;
       }
       const path = text(val(result, 'path', 'Path')).trim();
-      const saved = path ? `处理报告已保存：${path}` : '处理报告已保存。';
+      const saved = path ? t('state.reportSavedPath', {path}) : t('state.reportSaved');
       showMessage(saved);
       toast(saved);
     } catch (error) {
-      if (!shuttingDown) { showMessage(error.message); toast(error.message); }
+      if (!shuttingDown) { const message = localizedError(error); showMessage(message); toast(message); }
     } finally {
       exportPending = false;
       endOperation('export-report');
@@ -1087,32 +1270,32 @@
     if (shuttingDown || exportPending) return;
     shuttingDown = true;
     activeOperation = 'shutdown';
-    showMessage('正在关闭应用…');
+    showMessage(t('state.closing'));
     syncControls();
     try { await api('/api/shutdown', {method:'POST', body:'{}'}); }
     catch (error) {
       if (isDesktop) {
         shuttingDown = false;
         activeOperation = '';
-        showMessage(error.message);
-        toast(error.message);
+        showMessage(localizedError(error));
+        toast(localizedError(error));
         syncControls();
         return;
       }
       /* Server may close the connection immediately after accepting shutdown. */
     }
     if (isDesktop) {
-      $('footer-status').textContent = '桌面应用正在关闭…';
-      toast('应用正在关闭。');
+      $('footer-status').textContent = t('connection.desktopClosing');
+      toast(t('state.appClosing'));
       return;
     }
     try { sessionStorage.removeItem('dji-lut-access'); } catch (_) { /* No persistent data to clear. */ }
-    $('footer-status').textContent = '应用已关闭，可以关闭此浏览器标签页。';
-    toast('应用已关闭。');
+    $('footer-status').textContent = t('state.appClosedBrowser');
+    toast(t('state.appClosed'));
     setTimeout(() => window.close(), 700);
   };
   if (isDesktop) {
-    $('app-mode-hint').textContent = '桌面版 · 直接处理本机文件，原片保持不变';
+    $('app-mode-hint').textContent = t('app.desktopHint');
   }
   $('close-button').addEventListener('click', closeApplication);
   $('header-close-button').addEventListener('click', closeApplication);
@@ -1152,6 +1335,7 @@
   const fileDetailDialog = $('file-detail-dialog');
   restoreDialogFocus(lutDialog, $('mode-toggle'));
   restoreDialogFocus(fileDetailDialog, $('mode-toggle'));
+  fileDetailDialog.addEventListener('close', () => { currentDetail = null; });
   $('lut-open-button').addEventListener('click', (event) => openAppDialog(lutDialog, event.currentTarget));
   $('lut-dialog-close').addEventListener('click', () => lutDialog.close());
   $('file-detail-close').addEventListener('click', () => fileDetailDialog.close());
@@ -1160,6 +1344,7 @@
       if (event.target === dialog) dialog.close();
     });
   }
+  $('language-select').addEventListener('change', (event) => { void changeLanguage(event.currentTarget.value); });
   updateGuidedPage();
 
   (async () => {
@@ -1167,15 +1352,25 @@
     updateOutputDestination();
     if (!isDesktop && !token) {
       $('connection').classList.add('disconnected');
-      $('connection').innerHTML = '<i></i> 缺少访问凭据';
-      $('footer-status').textContent = '请从应用自动打开的页面启动';
-      showMessage('缺少本机访问凭据。请关闭本页并重新启动应用。');
+      $('connection').innerHTML = `<i></i> ${t('connection.noCredential')}`;
+      $('connection').setAttribute('aria-label', t('connection.noCredential'));
+      $('footer-status').textContent = t('state.noCredentialPage');
+      showMessage(t('state.noCredentialHint'));
       activeOperation = '';
       syncControls();
       $('header-close-button').disabled = true;
       return;
     }
     try {
+      if (isDesktop) {
+        try {
+          const preference = await api('/api/desktop-preferences');
+          const preferred = i18nApi.normalizeLanguage(val(preference, 'language', 'Language'));
+          if (preferred) nativeLanguageController.setConfirmed(preferred);
+        } catch (_) { /* Older or restarting desktop bridges can use the browser fallback. */ }
+        desktopPreferenceReady = true;
+        $('language-select').disabled = false;
+      }
       const boot = await api('/api/bootstrap');
       const defaults = val(boot,'defaults','Defaults') || boot;
       inputPath.value = text(val(defaults,'input','input_root','Input'), '');
@@ -1184,14 +1379,15 @@
       const choice = document.querySelector(`input[name="look"][value="${look === 'vivid' ? 'vivid' : 'standard'}"]`);
       if (choice) choice.checked = true;
       $('recursive').checked = Boolean(val(defaults,'recursive','Recursive'));
+      latestBootstrap = boot;
       renderBootstrapResources(boot);
       updateOutputDestination();
-      $('footer-status').textContent = isDesktop ? '桌面应用已就绪' : '本机服务已就绪';
+      $('footer-status').textContent = t(isDesktop ? 'connection.desktopReady' : 'state.localReady');
       await refreshState({recover:true});
     } catch (error) {
-      if (connected) $('footer-status').textContent = isDesktop ? '桌面应用已就绪，但初始化失败' : '本机服务已连接，但初始化失败';
-      showMessage(error.message);
-      toast(error.message);
+      if (connected) $('footer-status').textContent = t(isDesktop ? 'state.desktopInitFailed' : 'state.localInitFailed');
+      showMessage(localizedError(error));
+      toast(localizedError(error));
     } finally {
       endOperation('bootstrap');
     }
