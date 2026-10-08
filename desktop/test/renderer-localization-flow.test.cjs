@@ -439,3 +439,45 @@ test('switching locale on a finished result keeps the result page and translates
   assert.equal(app.previewCount(), 1);
   assert.equal(app.runCount(), 1);
 });
+
+test('replayed batch logs translate only the no-LUT sentinel in both locales', async () => {
+  const items = [
+    {input:'log-m.mov', action:'copy', status:'copied_needs_review', needs_review:true, reason:'unknown profile'},
+    {input:'normal.mov', action:'copy', status:'copied_nonlog', needs_review:false, reason:'normal footage'},
+    {input:'unknown.mov', action:'copy', status:'copied_needs_review', needs_review:true, reason:'unknown profile'}
+  ];
+  const app = makeHarness({language:'en', runState:{
+    running:false, finished:true, total:3, completed:3, percent:100,
+    summary:{encoded:0, copied:3, needs_review:2, failed:0},
+    plan:{items}, items,
+    logs:[
+      '待确认素材已复制：log-m.mov（未使用 LUT）',
+      '复制完成：normal.mov（未使用 LUT）',
+      '待确认素材已复制：unknown.mov（未使用 LUT）'
+    ]
+  }});
+  await app.booted;
+  app.element('look-vivid').checked = true;
+  await app.click('preview-button');
+  await app.click('run-button');
+
+  const englishLogs = app.element('log-list').innerHTML;
+  assert.match(englishLogs, /Review footage copied: log-m\.mov \(No LUT used\)/);
+  assert.match(englishLogs, /Copied unchanged: normal\.mov \(No LUT used\)/);
+  assert.match(englishLogs, /Review footage copied: unknown\.mov \(No LUT used\)/);
+  assert.doesNotMatch(englishLogs, /未使用 LUT/);
+
+  await app.setLanguage('zh-CN');
+  const chineseLogs = app.element('log-list').innerHTML;
+  assert.match(chineseLogs, /待确认素材已复制：log-m\.mov（未使用 LUT）/);
+  assert.match(chineseLogs, /原样复制：normal\.mov（未使用 LUT）/);
+  assert.match(chineseLogs, /待确认素材已复制：unknown\.mov（未使用 LUT）/);
+
+  await app.setLanguage('en');
+  const replayedEnglishLogs = app.element('log-list').innerHTML;
+  assert.match(replayedEnglishLogs, /Review footage copied: log-m\.mov \(No LUT used\)/);
+  assert.match(replayedEnglishLogs, /Copied unchanged: normal\.mov \(No LUT used\)/);
+  assert.match(replayedEnglishLogs, /Review footage copied: unknown\.mov \(No LUT used\)/);
+  assert.doesNotMatch(replayedEnglishLogs, /未使用 LUT/);
+  assert.equal(app.runCount(), 1);
+});

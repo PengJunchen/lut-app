@@ -990,11 +990,16 @@
         '待确认素材已复制': t('log.reviewCopied'), '跳过已有文件': t('log.skipped'),
         '处理失败': t('log.failed')
       };
-      if (labels[match[1]]) return t('log.fileStatus', {status: labels[match[1]], path: match[2], lut: match[3]});
+      if (labels[match[1]]) return t('log.fileStatus', {status: labels[match[1]], path: match[2], lut: localizeLogLut(match[3])});
     }
     const known = i18n.translateKnownMessage(line);
     if (known) return known;
     return line ? t('api.technicalDetails', {details: line}) : '';
+  }
+  function localizeLogLut(value) {
+    const name = text(value).trim();
+    if (name === '未使用 LUT' || name === 'No LUT used') return t('lut.none');
+    return value;
   }
   function localizeErrorText(value) {
     const known = i18n.translateKnownMessage(value);
