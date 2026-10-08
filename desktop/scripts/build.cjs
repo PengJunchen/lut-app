@@ -6,10 +6,16 @@ const { spawnSync } = require("node:child_process");
 const ROOT = path.resolve(__dirname, "../..");
 const TARGETS = new Set(["darwin-arm64", "darwin-amd64", "windows-amd64"]);
 
-function nativeTarget() {
+function nativeTargetForHost() {
   if (process.platform === "darwin" && process.arch === "arm64") return "darwin-arm64";
   if (process.platform === "darwin" && process.arch === "x64") return "darwin-amd64";
   if (process.platform === "win32" && process.arch === "x64") return "windows-amd64";
+  return null;
+}
+
+function nativeTarget() {
+  const target = nativeTargetForHost();
+  if (target) return target;
   throw new Error(`Unsupported native desktop target: ${process.platform}-${process.arch}`);
 }
 
@@ -37,6 +43,36 @@ function builderCLI() {
 function installNativeElectronRuntime() {
   const installer = path.join(ROOT, "node_modules", "electron", "install.js");
   run(process.execPath, [installer]);
+}
+
+function nativeElectronDist(target) {
+  if (target !== nativeTargetForHost()) return null;
+
+  const electronRoot = path.join(ROOT, "node_modules", "electron");
+  const electronVersion = JSON.parse(fs.readFileSync(path.join(electronRoot, "package.json"), "utf8")).version;
+  const dist = path.join(electronRoot, "dist");
+  const distVersion = fs.readFileSync(path.join(dist, "version"), "utf8").trim().replace(/^v/, "");
+  if (distVersion !== electronVersion) {
+    throw new Error(`Electron dist version ${distVersion || "(empty)"} does not match installed package version ${electronVersion}`);
+  }
+
+  const expectedPaths = target.startsWith("darwin-")
+    ? [
+      path.join(dist, "Electron.app"),
+      path.join(dist, "Electron.app", "Contents", "MacOS", "Electron"),
+    ]
+    : [path.join(dist, "electron.exe")];
+  for (const expectedPath of expectedPaths) {
+    let stat;
+    try { stat = fs.statSync(expectedPath); } catch {
+      throw new Error(`Installed Electron dist is missing ${path.relative(electronRoot, expectedPath)}`);
+    }
+    const isBundle = expectedPath.endsWith(".app");
+    if (isBundle ? !stat.isDirectory() : !stat.isFile()) {
+      throw new Error(`Installed Electron dist has an invalid ${path.relative(electronRoot, expectedPath)}`);
+    }
+  }
+  return dist;
 }
 
 function buildTarget(target, engineOnly) {
@@ -74,6 +110,8 @@ function buildTarget(target, engineOnly) {
     "--publish", "never",
     ...(goos === "windows" ? ["--win", "zip", "--x64"] : ["--mac", "zip", `--${electronArch}`]),
   ];
+  const electronDist = nativeElectronDist(target);
+  if (electronDist) builderArgs.push(`--config.electronDist=${electronDist}`);
   run(process.execPath, builderArgs, {
     env: { ...process.env, DJI_LUT_TARGET: target, DJI_LUT_OUTPUT: outputRelative },
   });
