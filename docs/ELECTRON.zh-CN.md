@@ -41,7 +41,7 @@ npm run build:engine
 npm start
 ```
 
-源码开发首次启动时，Electron 会按本机平台从官方发行源下载对应运行时；发行包已包含 Electron 本体，可离线运行。
+源码开发时，npm 安装和构建脚本默认按本机平台从官方发行源准备 Electron 运行时；发行包已包含 Electron 本体，可离线运行。
 
 把 `darwin-arm64` 替换为 `darwin-amd64` 或 `windows-amd64` 可准备对应平台的运行时。Apple Silicon Mac 上的开发启动应使用 `darwin-arm64`；Intel Mac 使用 `darwin-amd64`。LUT 文件仅需准备一次，脚本按完整 library 中的 SHA-256 校验直接文件或 ZIP 内的指定成员，全部成功后才替换本地 LUT 目录并清除旧版本。可选 --source-dir 导入匹配的已有文件；原目录不会被修改。
 

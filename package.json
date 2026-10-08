@@ -18,5 +18,14 @@
   "devDependencies": {
     "electron": "44.5.1",
     "electron-builder": "26.15.3"
+  },
+  "author": "DJI LUT contributors",
+  "homepage": "https://github.com/PengJunchen/lut-app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PengJunchen/lut-app.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PengJunchen/lut-app/issues"
   }
 }
