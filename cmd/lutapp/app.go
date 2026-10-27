@@ -19,10 +19,11 @@ import (
 )
 
 type frontendRequest struct {
-	Input     string      `json:"input"`
-	Output    string      `json:"output"`
-	Look      engine.Look `json:"look"`
-	Recursive bool        `json:"recursive"`
+	Input     string             `json:"input"`
+	Output    string             `json:"output"`
+	Look      engine.Look        `json:"look"`
+	Quality   engine.QualityMode `json:"quality"`
+	Recursive bool               `json:"recursive"`
 }
 
 type folderPickerRequest struct {
@@ -42,22 +43,23 @@ type stateItem struct {
 }
 
 type appState struct {
-	Running     bool           `json:"running"`
-	Finished    bool           `json:"finished"`
-	Cancelled   bool           `json:"cancelled"`
-	CurrentFile string         `json:"current_file,omitempty"`
-	Percent     float64        `json:"percent"`
-	Completed   int            `json:"completed"`
-	Total       int            `json:"total"`
-	InputRoot   string         `json:"input_root,omitempty"`
-	OutputRoot  string         `json:"output_root,omitempty"`
-	Look        engine.Look    `json:"look,omitempty"`
-	Recursive   bool           `json:"recursive"`
-	Items       []stateItem    `json:"items"`
-	Summary     engine.Summary `json:"summary"`
-	Logs        []string       `json:"logs"`
-	Error       string         `json:"error,omitempty"`
-	Report      *engine.Report `json:"report,omitempty"`
+	Running     bool               `json:"running"`
+	Finished    bool               `json:"finished"`
+	Cancelled   bool               `json:"cancelled"`
+	CurrentFile string             `json:"current_file,omitempty"`
+	Percent     float64            `json:"percent"`
+	Completed   int                `json:"completed"`
+	Total       int                `json:"total"`
+	InputRoot   string             `json:"input_root,omitempty"`
+	OutputRoot  string             `json:"output_root,omitempty"`
+	Look        engine.Look        `json:"look,omitempty"`
+	Quality     engine.QualityMode `json:"quality,omitempty"`
+	Recursive   bool               `json:"recursive"`
+	Items       []stateItem        `json:"items"`
+	Summary     engine.Summary     `json:"summary"`
+	Logs        []string           `json:"logs"`
+	Error       string             `json:"error,omitempty"`
+	Report      *engine.Report     `json:"report,omitempty"`
 }
 
 type application struct {
@@ -67,6 +69,7 @@ type application struct {
 	defaultInput     string
 	defaultOutput    string
 	defaultLook      engine.Look
+	defaultQuality   engine.QualityMode
 	defaultRecursive bool
 	closing          bool
 	previewing       bool
@@ -91,12 +94,17 @@ func newApplication(base engine.Config, catalog []engine.LUTSpec, defaultInput s
 	if defaultLook == "" {
 		defaultLook = engine.LookStandard
 	}
+	defaultQuality := base.Quality
+	if defaultQuality == "" {
+		defaultQuality = engine.QualityBalanced
+	}
 	return &application{
 		base:             base,
 		catalog:          append([]engine.LUTSpec(nil), catalog...),
 		defaultInput:     defaultInput,
 		defaultOutput:    defaultOutput,
 		defaultLook:      defaultLook,
+		defaultQuality:   defaultQuality,
 		defaultRecursive: base.Recursive,
 		folderPicker:     folderpicker.New(),
 		state:            appState{Items: []stateItem{}, Logs: []string{}},
@@ -111,6 +119,7 @@ func (a *application) Bootstrap() any {
 			"input":     a.defaultInput,
 			"output":    a.defaultOutput,
 			"look":      a.defaultLook,
+			"quality":   a.defaultQuality,
 			"recursive": a.defaultRecursive,
 		},
 		"catalog":                    a.catalog,
@@ -236,6 +245,7 @@ func (a *application) Preview(ctx context.Context, raw json.RawMessage) (any, er
 		InputRoot:  plan.InputRoot,
 		OutputRoot: plan.OutputRoot,
 		Look:       plan.Look,
+		Quality:    cfg.Quality,
 		Recursive:  request.Recursive,
 		Items:      makeStateItems(plan.Items, false),
 		Summary:    engine.Summary{Total: len(plan.Items)},
@@ -285,6 +295,7 @@ func (a *application) Start(ctx context.Context, raw json.RawMessage) (any, erro
 		InputRoot:  plan.InputRoot,
 		OutputRoot: plan.OutputRoot,
 		Look:       plan.Look,
+		Quality:    cfg.Quality,
 		Recursive:  request.Recursive,
 		Items:      makeStateItems(plan.Items, true),
 		Total:      len(plan.Items),
@@ -619,10 +630,14 @@ func (a *application) configFor(request frontendRequest) (engine.Config, error) 
 	if request.Look == "" {
 		request.Look = engine.LookStandard
 	}
+	if request.Quality == "" {
+		request.Quality = engine.QualityBalanced
+	}
 	cfg := a.base
 	cfg.Input = request.Input
 	cfg.Output = request.Output
 	cfg.Look = request.Look
+	cfg.Quality = request.Quality
 	cfg.Recursive = request.Recursive
 	if err := cfg.Validate(); err != nil {
 		return engine.Config{}, err
@@ -657,7 +672,7 @@ func makeStateItems(items []engine.ItemPlan, pending bool) []stateItem {
 }
 
 func sameRequestConfig(left, right engine.Config) bool {
-	return sameInput(left.Input, right.Input) && sameInput(left.Output, right.Output) && left.Look == right.Look && left.Recursive == right.Recursive
+	return sameInput(left.Input, right.Input) && sameInput(left.Output, right.Output) && left.Look == right.Look && left.Quality == right.Quality && left.Recursive == right.Recursive
 }
 
 func sameInput(left, right string) bool {

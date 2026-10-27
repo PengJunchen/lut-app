@@ -90,7 +90,7 @@
   const esc = (value) => text(value).replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const baseName = (path) => text(path).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || text(path);
   const selectedLook = () => document.querySelector('input[name="look"]:checked')?.value || 'standard';
-  const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), recursive: $('recursive').checked});
+  const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), quality: $('quality').value === 'detail' ? 'detail' : 'balanced', recursive: $('recursive').checked});
   const api = async (route, options = {}) => {
     if (isDesktop) {
       const languagePreferenceWrite = route === '/api/desktop-language' && (options.method || 'GET') === 'POST';
@@ -270,7 +270,7 @@
     const busy = operationBusy();
     const locked = busy || batchLocked;
     const unavailable = !connected;
-    for (const id of ['input-path', 'output-path', 'input-select-button', 'output-select-button', 'output-reset-button', 'recursive']) {
+    for (const id of ['input-path', 'output-path', 'input-select-button', 'output-select-button', 'output-reset-button', 'recursive', 'quality']) {
       $(id).disabled = locked || unavailable;
     }
     document.querySelectorAll('input[name="look"]').forEach((node) => node.disabled = locked || unavailable);
@@ -427,6 +427,7 @@
   inputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
   outputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
   $('recursive').addEventListener('change', invalidatePreview);
+  $('quality').addEventListener('change', invalidatePreview);
   document.querySelectorAll('input[name="look"]').forEach((node) => node.addEventListener('change', invalidatePreview));
   $('input-select-button').addEventListener('click', () => chooseFolder('input'));
   $('output-select-button').addEventListener('click', () => chooseFolder('output'));
@@ -924,11 +925,12 @@
     const input = text(val(plan, 'input_root', 'inputRoot', 'InputRoot'), settings().input);
     const output = text(val(plan, 'output_root', 'outputRoot', 'OutputRoot'), finalOutputDestination());
     const look = text(val(plan, 'look', 'Look'), settings().look);
+    const quality = text(val(plan, 'quality', 'Quality'), settings().quality);
     const recursive = Boolean(val(plan, 'recursive', 'Recursive') ?? settings().recursive);
     const restoreCount = items.filter(willEncode).length;
     const copyCount = Math.max(0, items.length - restoreCount);
     const reviewCount = items.filter((item) => !willEncode(item) && needsReview(item)).length;
-    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
+    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.quality', {quality:t(quality === 'detail' ? 'quality.detail' : 'quality.balanced')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
     $('preview-count').textContent = t('video.count', {count: items.length});
     $('preview-restore-count').textContent = restoreCount;
     $('preview-copy-count').textContent = copyCount;
@@ -1389,6 +1391,7 @@
       const choice = document.querySelector(`input[name="look"][value="${look === 'vivid' ? 'vivid' : 'standard'}"]`);
       if (choice) choice.checked = true;
       $('recursive').checked = Boolean(val(defaults,'recursive','Recursive'));
+      $('quality').value = val(defaults,'quality','Quality') === 'detail' ? 'detail' : 'balanced';
       latestBootstrap = boot;
       renderBootstrapResources(boot);
       updateOutputDestination();

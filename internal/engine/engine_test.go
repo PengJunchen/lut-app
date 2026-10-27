@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -244,5 +245,29 @@ func TestFilterPathUsesTwoLayerEscapingWithoutQuotes(t *testing.T) {
 	joined := strings.Join(command, " ")
 	if strings.Contains(joined, "lut3d=file='") || !strings.Contains(joined, "-nostdin") {
 		t.Fatalf("unsafe filter path quoting or missing noninteractive flag: %s", joined)
+	}
+}
+
+func TestHardwareDecodeOptionsPrecedeInputAndExcludeSoftwareFallback(t *testing.T) {
+	file := filePlan{source: "input.mp4", inputMatrix: "bt709", inputRange: "tv", lut: &LUTSpec{File: "restore.cube"}}
+	for _, encoder := range []EncoderMode{EncoderVideoToolbox, EncoderX265} {
+		command := buildFFmpegCommand(normalizedConfig{ffmpeg: "ffmpeg", filterThreads: 6}, file, "temp.mp4", encoder)
+		inputIndex, accelerationIndex := -1, -1
+		for i, argument := range command {
+			if argument == "-i" {
+				inputIndex = i
+			}
+			if argument == "-hwaccel" {
+				accelerationIndex = i
+			}
+		}
+		wantHardwareDecode := runtime.GOOS == "darwin" && encoder == EncoderVideoToolbox
+		if wantHardwareDecode {
+			if accelerationIndex < 0 || accelerationIndex >= inputIndex || command[accelerationIndex+1] != "auto" {
+				t.Fatalf("hardware decoding must be an automatic input option: %v", command)
+			}
+		} else if accelerationIndex >= 0 {
+			t.Fatalf("software fallback or other platforms must not request hardware decoding: %v", command)
+		}
 	}
 }

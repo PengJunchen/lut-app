@@ -50,6 +50,13 @@ func normalizeConfig(c Config) (normalizedConfig, error) {
 	if look != LookStandard && look != LookVivid {
 		return normalizedConfig{}, fmt.Errorf("unsupported look %q (expected standard or vivid)", look)
 	}
+	quality := c.Quality
+	if quality == "" {
+		quality = QualityBalanced
+	}
+	if quality != QualityBalanced && quality != QualityDetail {
+		return normalizedConfig{}, fmt.Errorf("unsupported quality %q (expected balanced or detail)", quality)
+	}
 	encoder := c.Encoder
 	if encoder == "" {
 		encoder = EncoderAuto
@@ -83,6 +90,9 @@ func normalizeConfig(c Config) (normalizedConfig, error) {
 	crf := c.CRF
 	if crf <= 0 {
 		crf = 16
+		if quality == QualityDetail {
+			crf = 14
+		}
 	}
 	preset := c.Preset
 	if preset == "" {
@@ -110,6 +120,7 @@ func normalizeConfig(c Config) (normalizedConfig, error) {
 		return normalizedConfig{}, fmt.Errorf("resolve LUT directory: %w", err)
 	}
 	c.Look = look
+	c.Quality = quality
 	c.Encoder = encoder
 	c.Workers = workers
 	c.FilterThreads = filterThreads
@@ -142,6 +153,10 @@ func isAncestor(parent, child string) bool {
 }
 
 func defaultEncoder(cfg normalizedConfig, available map[string]bool) (EncoderMode, error) {
+	return defaultEncoderForPlatform(cfg, available, runtime.GOOS, runtime.GOARCH)
+}
+
+func defaultEncoderForPlatform(cfg normalizedConfig, available map[string]bool, goos, goarch string) (EncoderMode, error) {
 	if cfg.Encoder == EncoderX265 {
 		if !available["libx265"] {
 			return "", errors.New("ffmpeg does not provide libx265")
@@ -149,12 +164,15 @@ func defaultEncoder(cfg normalizedConfig, available map[string]bool) (EncoderMod
 		return EncoderX265, nil
 	}
 	if cfg.Encoder == EncoderVideoToolbox {
+		if cfg.Quality == QualityDetail && (goos != "darwin" || goarch != "arm64") {
+			return "", errors.New("VideoToolbox detail quality requires Apple Silicon; use auto or x265")
+		}
 		if !available["hevc_videotoolbox"] {
 			return "", errors.New("ffmpeg does not provide hevc_videotoolbox")
 		}
 		return EncoderVideoToolbox, nil
 	}
-	if runtime.GOOS == "darwin" && available["hevc_videotoolbox"] {
+	if goos == "darwin" && available["hevc_videotoolbox"] && (cfg.Quality != QualityDetail || goarch == "arm64") {
 		return EncoderVideoToolbox, nil
 	}
 	if available["libx265"] {

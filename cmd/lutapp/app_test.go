@@ -108,6 +108,32 @@ func TestBootstrapKeepsDefaultOutputRelativeToChosenInput(t *testing.T) {
 	}
 }
 
+func TestQualityDefaultsValidationAndPreviewInvalidation(t *testing.T) {
+	input := t.TempDir()
+	app := newApplication(engine.Config{Manifest: testManifest(), Quality: engine.QualityDetail}, nil, input)
+	defaults := app.Bootstrap().(map[string]any)["defaults"].(map[string]any)
+	if defaults["quality"] != engine.QualityDetail {
+		t.Fatalf("quality default = %#v", defaults["quality"])
+	}
+	request := json.RawMessage(`{"input":` + quoteJSON(t, input) + `,"quality":"balanced"}`)
+	if _, err := app.Preview(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	changed := json.RawMessage(`{"input":` + quoteJSON(t, input) + `,"quality":"detail"}`)
+	if _, err := app.Start(t.Context(), changed); err == nil || !strings.Contains(err.Error(), "设置已改变") {
+		t.Fatalf("changed quality must require a new preview: %v", err)
+	}
+	if _, err := app.configFor(frontendRequest{Input: input, Quality: "invalid"}); err == nil {
+		t.Fatal("unsupported request quality was accepted")
+	}
+	if opts, err := parseCLI([]string{"--quality", "detail"}, input); err != nil || opts.qualityText != "detail" {
+		t.Fatalf("CLI quality = %#v, %v", opts, err)
+	}
+	if _, err := parseCLI([]string{"--quality", "invalid"}, input); err == nil {
+		t.Fatal("unsupported CLI quality was accepted")
+	}
+}
+
 func TestLoadLibraryDecodesSchemaOneAndPreservesAssetFields(t *testing.T) {
 	data := []byte(`{"schema":1,"assets":[{"id":"verified-lut","title":"Verified LUT","provenance":{"url":"https://example.test/source"},"cameras":[{"id":"pocket4p","name":"Pocket 4P"}]}]}`)
 	got := loadLibrary(fstest.MapFS{"library.json": &fstest.MapFile{Data: data}})

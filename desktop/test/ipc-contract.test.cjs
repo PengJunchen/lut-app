@@ -75,3 +75,16 @@ test('English locale validation errors remain strict and localized', () => {
     { message: 'Desktop request contains an unsupported field' },
   );
 });
+
+test('encoding quality is explicitly selected from the supported modes', () => {
+  for (const quality of ['balanced', 'detail']) {
+    assert.equal(parseInvocation('/api/preview', {
+      method: 'POST', body: JSON.stringify({input:'/source', quality}),
+    }).body.quality, quality);
+  }
+  for (const quality of ['lossless', 90, null, {}, '']) {
+    assert.throws(() => parseInvocation('/api/run', {
+      method:'POST', body:JSON.stringify({input:'/source', quality}),
+    }, 'en'), {message:'Encoding quality is invalid'});
+  }
+});
