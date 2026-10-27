@@ -113,7 +113,13 @@ function buildTarget(target, engineOnly) {
   const electronDist = nativeElectronDist(target);
   if (electronDist) builderArgs.push(`--config.electronDist=${electronDist}`);
   run(process.execPath, builderArgs, {
-    env: { ...process.env, DJI_LUT_TARGET: target, DJI_LUT_OUTPUT: outputRelative },
+    env: {
+      ...process.env,
+      DJI_LUT_TARGET: target,
+      DJI_LUT_OUTPUT: outputRelative,
+      // The macOS configuration uses ad-hoc signing, including PR packages.
+      ...(goos === "darwin" ? { CSC_FOR_PULL_REQUEST: "true" } : {}),
+    },
   });
 
   const builtArchive = path.join(stagedOutput, artifact);
