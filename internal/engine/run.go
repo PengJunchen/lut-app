@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -137,7 +138,6 @@ func Run(ctx context.Context, config Config, onEvent func(Event)) (*Report, erro
 					continue
 				}
 				item := reportFromPlan(file)
-				emit(Event{Type: "item_started", Path: file.relative, Total: total, Completed: int(completed.Load())})
 				if file.public.Action == ActionEncode {
 					select {
 					case encodeSlots <- struct{}{}:
@@ -146,6 +146,7 @@ func Run(ctx context.Context, config Config, onEvent func(Event)) (*Report, erro
 						continue
 					}
 				}
+				emit(Event{Type: "item_started", Path: file.relative, Total: total, Completed: int(completed.Load())})
 				if file.public.Action == ActionEncode && encoderErr != nil {
 					item.Status = StatusFailed
 					item.Error = "cannot query ffmpeg encoders: " + encoderErr.Error()
@@ -223,7 +224,7 @@ func cancelledItem(file filePlan, err error) ItemReport {
 
 func processFile(ctx context.Context, cfg normalizedConfig, file filePlan, previous Report, encoders map[string]bool, emit func(Event), progress func(float64)) (ItemReport, error) {
 	item := reportFromPlan(file)
-	item.ConfigKey = configKey(file, cfg.Look)
+	item.ConfigKey = configKey(file, cfg.Look, cfg.Quality)
 	if err := ctx.Err(); err != nil {
 		return item, err
 	}
@@ -434,8 +435,12 @@ func loadPreviousReport(path string) Report {
 	return report
 }
 
-func configKey(file filePlan, look Look) string {
-	return strings.Join([]string{file.profile, file.camera, string(look), file.public.LUTSHA256, file.inputRange, file.inputMatrix}, "|")
+func configKey(file filePlan, look Look, quality QualityMode) string {
+	key := strings.Join([]string{file.profile, file.camera, string(look), file.public.LUTSHA256, file.inputRange, file.inputMatrix}, "|")
+	if file.public.Action == ActionEncode && quality == QualityDetail {
+		key += "|quality=detail-v1"
+	}
+	return key
 }
 
 func queryEncoders(ctx context.Context, ffmpeg string) (map[string]bool, error) {
@@ -708,10 +713,17 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 	filter := fmt.Sprintf("scale=in_color_matrix=%s:out_color_matrix=bt709:in_range=%s:out_range=pc:flags=accurate_rnd+full_chroma_int,format=gbrpf32le,lut3d=file=%s:interp=tetrahedral,scale=in_color_matrix=bt709:out_color_matrix=bt709:in_range=pc:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le", file.inputMatrix, file.inputRange, escapeFilterPath(file.lut.File))
 	command := []string{
 		cfg.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-loglevel", "warning", "-progress", "pipe:1", "-y",
+	}
+	if runtime.GOOS == "darwin" && encoder == EncoderVideoToolbox {
+		// Auto permits software decoding when the input is unsupported by the
+		// hardware decoder. The LUT filter still receives software frames.
+		command = append(command, "-hwaccel", "auto")
+	}
+	command = append(command,
 		"-i", file.source, "-map", fmt.Sprintf("0:%d", file.video.Index), "-map", "0:a?",
 		"-map_metadata", "0", "-map_chapters", "0", "-filter_threads", strconv.Itoa(cfg.filterThreads),
 		"-vf", filter, "-fps_mode", "passthrough", "-c:a", "copy",
-	}
+	)
 	command = append(command, "-map_metadata:s:v:0", fmt.Sprintf("0:s:%d", file.video.Index))
 	for ordinal, audio := range audioStreams(file.probe) {
 		command = append(command, fmt.Sprintf("-map_metadata:s:a:%d", ordinal), fmt.Sprintf("0:s:%d", audio.Index))
@@ -728,7 +740,12 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 			value := int64(clamp(pixels*fps*.1, 8e6, 160e6))
 			bitrate = strconv.FormatInt(value, 10)
 		}
-		command = append(command, "-c:v", "hevc_videotoolbox", "-pix_fmt", "p010le", "-profile:v", "main10", "-b:v", bitrate)
+		command = append(command, "-c:v", "hevc_videotoolbox", "-pix_fmt", "p010le", "-profile:v", "main10")
+		if cfg.Quality == QualityDetail {
+			command = append(command, "-q:v", "90")
+		} else {
+			command = append(command, "-b:v", bitrate)
+		}
 	} else {
 		command = append(command, "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-profile:v", "main10", "-crf", strconv.Itoa(cfg.crf), "-preset", cfg.preset)
 		command = append(command, "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited")

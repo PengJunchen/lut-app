@@ -10,8 +10,16 @@ const (
 	LookVivid    Look = "vivid"
 )
 
-// EncoderMode selects the video encoder. Auto uses VideoToolbox on macOS when
-// available, with x265 fallback; other platforms use x265.
+// QualityMode controls encoding fidelity without changing the selected LUT.
+type QualityMode string
+
+const (
+	QualityBalanced QualityMode = "balanced"
+	QualityDetail   QualityMode = "detail"
+)
+
+// EncoderMode selects the video encoder. Auto prefers VideoToolbox on macOS,
+// except detail quality on Intel, with x265 fallback elsewhere.
 type EncoderMode string
 
 const (
@@ -28,6 +36,7 @@ type Config struct {
 	Output        string      `json:"output,omitempty"`
 	Recursive     bool        `json:"recursive"`
 	Look          Look        `json:"look,omitempty"`
+	Quality       QualityMode `json:"quality,omitempty"`
 	FFmpeg        string      `json:"ffmpeg,omitempty"`
 	FFprobe       string      `json:"ffprobe,omitempty"`
 	LUTDir        string      `json:"lut_dir,omitempty"`

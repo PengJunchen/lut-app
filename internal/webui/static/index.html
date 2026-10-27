@@ -110,6 +110,16 @@
         </label>
       </div>
 
+      <div class="quality-controls">
+        <label class="field-label" for="quality">编码画质</label>
+        <select id="quality" aria-describedby="quality-hint">
+          <option value="balanced">均衡</option>
+          <option value="detail">细节优先</option>
+        </select>
+        <p id="quality-hint" class="field-hint">细节优先可减少重编码损失，但文件可能明显增大；不会改变 LUT 风格或恢复被 LUT 压暗的细节。</p>
+      </div>
+      <p class="field-hint vivid-hint">Vivid LUT 可能压缩暗部细节；暗光素材可考虑标准风格。</p>
+
       <div id="settings-action-host" class="settings-action-host">
         <div id="primary-action-row" class="action-row">
           <button id="preview-button" class="button primary" type="button"><span aria-hidden="true">⌕</span> 扫描并预览</button>

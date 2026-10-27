@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { AppLifecycle } = require('../lib/app-lifecycle.cjs');
 
-test('quit destroys the dialog parent, shuts down Go, and bounds unresolved IPC cleanup', async () => {
+test('quit destroys the dialog parent, shuts down Go, and bounds unresolved IPC cleanup', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let finishPicker;
   const order = [];
   const app = { quit() { order.push('app-quit'); } };
@@ -19,6 +20,7 @@ test('quit destroys the dialog parent, shuts down Go, and bounds unresolved IPC 
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(order, ['window-destroy', 'go-shutdown']);
 
+  t.mock.timers.tick(15);
   await quitting;
   assert.deepEqual(order, ['window-destroy', 'go-shutdown', 'app-quit']);
   finishPicker();

@@ -74,7 +74,7 @@ function validateBody(route, bodyKind, body, language) {
     return;
   }
   if (bodyKind === 'options') {
-    rejectUnknownKeys(body, new Set(['input', 'output', 'look', 'recursive']), language);
+    rejectUnknownKeys(body, new Set(['input', 'output', 'look', 'quality', 'recursive']), language);
     validateOptionalString(body.input, 'ipc.sourceFolderInvalid', MAX_PATH_LENGTH, language);
     validateOptionalString(body.output, 'ipc.outputFolderInvalid', MAX_PATH_LENGTH, language);
     if (body.look !== undefined && body.look !== 'standard' && body.look !== 'vivid') {
@@ -82,6 +82,9 @@ function validateBody(route, bodyKind, body, language) {
     }
     if (body.recursive !== undefined && typeof body.recursive !== 'boolean') {
       throw new Error(translate('ipc.scanInvalid', language));
+    }
+    if (body.quality !== undefined && body.quality !== 'balanced' && body.quality !== 'detail') {
+      throw new Error(translate('ipc.qualityInvalid', language));
     }
     return;
   }

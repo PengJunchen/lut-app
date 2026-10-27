@@ -328,6 +328,24 @@ test('failed rescan followed by language switch cannot restore a stale preview o
   assert.equal(app.runCount(), 0);
 });
 
+test('quality changes invalidate a preview and survive language switches through the run request', async () => {
+  const app = makeHarness();
+  await app.booted;
+  assert.equal(app.element('quality').value, 'balanced');
+  await app.click('preview-button');
+  app.element('quality').value = 'detail';
+  await app.element('quality').dispatch('change');
+  assert.equal(app.element('run-button').disabled, true);
+  await app.setLanguage('en');
+  assert.equal(app.element('quality').value, 'detail');
+  await app.click('preview-button');
+  assert.match(app.element('run-settings').innerHTML, /Detail priority/);
+  await app.click('run-button');
+  const request = app.calls.findLast((call) => call.route === '/api/run');
+  assert.equal(JSON.parse(request.body).quality, 'detail');
+  assert.equal(app.element('quality').disabled, true);
+});
+
 test('classic-mode preview stays visible and does not rerun when the locale changes', async () => {
   const app = makeHarness();
   await app.booted;
