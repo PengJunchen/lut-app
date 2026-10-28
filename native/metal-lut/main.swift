@@ -73,7 +73,7 @@ final class LUT {
         }
         pipeline = try device.makeComputePipelineState(function: function)
         var grid = 0, rows = [SIMD4<Float>]()
-        for raw in try String(contentsOfFile: path, encoding: .utf8).split(separator: "\n") {
+        for raw in try String(contentsOfFile: path, encoding: .utf8).split(whereSeparator: { $0.isNewline }) {
             let line = raw.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
             let fields = line.split(whereSeparator: { $0.isWhitespace })
             if fields.isEmpty { continue }
