@@ -16,7 +16,11 @@ type presentationPacket struct {
 }
 
 func probePresentationTimes(ctx context.Context, ffprobe, path string) ([]presentationPacket, error) {
-	cmd := newCommandContext(ctx, ffprobe, "-v", "error", "-select_streams", "v:0", "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", path)
+	return probePresentationTimesForStream(ctx, ffprobe, path, "v:0")
+}
+
+func probePresentationTimesForStream(ctx context.Context, ffprobe, path, selector string) ([]presentationPacket, error) {
+	cmd := newCommandContext(ctx, ffprobe, "-v", "error", "-select_streams", selector, "-show_packets", "-show_entries", "packet=pts_time,duration_time", "-of", "json", path)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	data, err := cmd.Output()
@@ -68,7 +72,7 @@ func comparePresentationTimes(source, output []presentationPacket, origin, toler
 }
 
 func validateMetalPresentationTimes(ctx context.Context, cfg normalizedConfig, file filePlan, path string) error {
-	source, err := probePresentationTimes(ctx, cfg.ffprobe, file.source)
+	source, err := probePresentationTimesForStream(ctx, cfg.ffprobe, file.source, strconv.Itoa(file.video.Index))
 	if err != nil {
 		return err
 	}

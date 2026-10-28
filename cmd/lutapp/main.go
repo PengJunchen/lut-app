@@ -134,8 +134,8 @@ func parseCLI(args []string, defaultInput string) (cliOptions, error) {
 		return *opts, errors.New("--look 只能是 standard 或 vivid")
 	}
 	opts.qualityText = strings.ToLower(strings.TrimSpace(opts.qualityText))
-	if opts.qualityText != string(engine.QualityBalanced) && opts.qualityText != string(engine.QualityDetail) {
-		return *opts, errors.New("--quality 只能是 balanced 或 detail")
+	if opts.qualityText != string(engine.QualityBalanced) && opts.qualityText != string(engine.QualityDetail) && opts.qualityText != string(engine.QualityPreserve) {
+		return *opts, errors.New("--quality 只能是 balanced、detail 或 preserve")
 	}
 	if opts.desktop && opts.batch {
 		return *opts, errors.New("--desktop 不能与 --batch 同时使用")
@@ -157,7 +157,7 @@ func newCLIFlagSet(defaultInput string, output io.Writer) (*flag.FlagSet, *cliOp
 	flags.StringVar(&opts.input, "input", defaultInput, "原片文件夹")
 	flags.StringVar(&opts.output, "output", "", "结果基础目录（默认：原片目录/Output）")
 	flags.StringVar(&opts.lookText, "look", "standard", "LUT 风格：standard 或 vivid")
-	flags.StringVar(&opts.qualityText, "quality", "balanced", "编码质量：balanced 或 detail（细节优先，文件可能更大）")
+	flags.StringVar(&opts.qualityText, "quality", "balanced", "编码质量：balanced、detail 或 preserve（编码无损，大文件）")
 	flags.BoolVar(&opts.metal, "metal", false, "尝试实验性 Metal LUT 加速（仅 Apple Silicon，不可用时自动回退）")
 	flags.BoolVar(&opts.recursive, "recursive", false, "包含子目录")
 	flags.BoolVar(&opts.dryRun, "dry-run", false, "只扫描并输出计划，不处理视频（需配合 --batch）")

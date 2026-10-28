@@ -83,7 +83,7 @@ function validateBody(route, bodyKind, body, language) {
     if (body.recursive !== undefined && typeof body.recursive !== 'boolean') {
       throw new Error(translate('ipc.scanInvalid', language));
     }
-    if (body.quality !== undefined && body.quality !== 'balanced' && body.quality !== 'detail') {
+    if (body.quality !== undefined && body.quality !== 'balanced' && body.quality !== 'detail' && body.quality !== 'preserve') {
       throw new Error(translate('ipc.qualityInvalid', language));
     }
     if (body.metal !== undefined && typeof body.metal !== 'boolean') {

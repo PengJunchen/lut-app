@@ -91,7 +91,10 @@
   const esc = (value) => text(value).replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const baseName = (path) => text(path).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || text(path);
   const selectedLook = () => document.querySelector('input[name="look"]:checked')?.value || 'standard';
-  const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), quality: $('quality').value === 'detail' ? 'detail' : 'balanced', metal: metalAvailable && $('metal').checked, recursive: $('recursive').checked});
+  const selectedQuality = () => ['detail', 'preserve'].includes($('quality').value) ? $('quality').value : 'balanced';
+  const qualityLabel = (quality) => t(quality === 'preserve' ? 'quality.preserve' : quality === 'detail' ? 'quality.detail' : 'quality.balanced');
+  const updateQualityHint = () => { const quality = selectedQuality(); $('quality-hint').textContent = t(quality === 'preserve' ? 'quality.preserveHint' : 'quality.hint'); };
+  const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), quality: selectedQuality(), metal: metalAvailable && $('metal').checked, recursive: $('recursive').checked});
   const api = async (route, options = {}) => {
     if (isDesktop) {
       const languagePreferenceWrite = route === '/api/desktop-language' && (options.method || 'GET') === 'POST';
@@ -429,7 +432,7 @@
   inputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
   outputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
   $('recursive').addEventListener('change', invalidatePreview);
-  $('quality').addEventListener('change', invalidatePreview);
+  $('quality').addEventListener('change', () => { updateQualityHint(); invalidatePreview(); });
   $('metal').addEventListener('change', invalidatePreview);
   document.querySelectorAll('input[name="look"]').forEach((node) => node.addEventListener('change', invalidatePreview));
   $('input-select-button').addEventListener('click', () => chooseFolder('input'));
@@ -707,6 +710,7 @@
     details.classList.remove('hidden');
   }
   function renderBootstrapResources(bootstrap, preservePages = false) {
+    updateQualityHint();
     metalAvailable = val(bootstrap, 'metal_available', 'MetalAvailable') === true;
     if (!metalAvailable) $('metal').checked = false;
     $('metal-hint').textContent = t(metalAvailable ? 'metal.hint' : 'metal.unavailableHint');
@@ -939,7 +943,7 @@
     const restoreCount = items.filter(willEncode).length;
     const copyCount = Math.max(0, items.length - restoreCount);
     const reviewCount = items.filter((item) => !willEncode(item) && needsReview(item)).length;
-    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.quality', {quality:t(quality === 'detail' ? 'quality.detail' : 'quality.balanced')}))}</span><span class="setting-chip">${esc(t('preview.metal', {mode:t(metal ? 'metal.enabled' : 'metal.disabled')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
+    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.quality', {quality:qualityLabel(quality)}))}</span><span class="setting-chip">${esc(t('preview.metal', {mode:t(metal ? 'metal.enabled' : 'metal.disabled')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
     $('preview-count').textContent = t('video.count', {count: items.length});
     $('preview-restore-count').textContent = restoreCount;
     $('preview-copy-count').textContent = copyCount;
@@ -981,6 +985,7 @@
       ['Processing cancelled', 'engineLog.processingCancelled'],
       ['Processing complete', 'engineLog.processingComplete'],
       ['Encoding and validation complete', 'engineLog.encodingComplete'],
+      ['Validating lossless export', 'status.verifying'],
       ['Metal LUT unavailable; retrying with CPU LUT', 'engineLog.metalFallback']
     ]);
     const exactKey = fixed.get(line);
@@ -1019,6 +1024,7 @@
   }
   function renderState(state) {
     const running = Boolean(val(state, 'running', 'Running'));
+    const verifying = running && val(state, 'stage', 'Stage') === 'verifying';
     const finished = Boolean(val(state, 'finished', 'done', 'Finished', 'Done'));
     const cancelled = Boolean(val(state, 'cancelled', 'Cancelled'));
     const stateError = val(state, 'error', 'Error');
@@ -1048,7 +1054,7 @@
     $('progress-title').textContent = running ? t('section.runningTitle') : finished ? t('status.batchEnded') : t('section.progressTitle');
     const stateBadge = $('run-state');
     stateBadge.className = `state-badge ${running ? 'running' : cancelled ? 'cancelled' : finished ? 'complete' : 'running'}`;
-    stateBadge.innerHTML = `<i></i> ${running ? t('status.running') : cancelled ? t('status.cancelled') : finished ? t('status.finished') : t('progress.preparing')}`;
+    stateBadge.innerHTML = `<i></i> ${verifying ? t('status.verifying') : running ? t('status.running') : cancelled ? t('status.cancelled') : finished ? t('status.finished') : t('progress.preparing')}`;
     $('progress-caption').textContent = text(val(state, 'current_file', 'currentFile', 'CurrentFile'), running ? t('progress.preparingTask') : finished ? t('progress.finished') : t('progress.waiting'));
     $('progress-numbers').textContent = t('progress.current', {completed, total});
     $('progress-fill').value = Math.max(0, Math.min(100, currentPercent));
@@ -1079,7 +1085,7 @@
     } else {
       $('complete-actions').classList.add('hidden');
       if (running && !shuttingDown && activeOperation !== 'picker') showMessage(t('status.processingHint'));
-      if (connected) $('footer-status').textContent = running ? t('status.processingFiles') : t('state.localReady');
+      if (connected) $('footer-status').textContent = verifying ? t('status.verifying') : running ? t('status.processingFiles') : t('state.localReady');
     }
     syncControls();
   }
@@ -1401,7 +1407,8 @@
       const choice = document.querySelector(`input[name="look"][value="${look === 'vivid' ? 'vivid' : 'standard'}"]`);
       if (choice) choice.checked = true;
       $('recursive').checked = Boolean(val(defaults,'recursive','Recursive'));
-      $('quality').value = val(defaults,'quality','Quality') === 'detail' ? 'detail' : 'balanced';
+      const quality = val(defaults,'quality','Quality');
+      $('quality').value = ['detail', 'preserve'].includes(quality) ? quality : 'balanced';
       latestBootstrap = boot;
       renderBootstrapResources(boot);
       $('metal').checked = metalAvailable && val(defaults,'metal','Metal') === true;

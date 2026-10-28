@@ -169,7 +169,7 @@ body.guided-mode .complete-actions .button{height:31px}
 .language-control{display:inline-flex;align-items:center;flex:none}
 .language-control select{height:31px;min-width:76px;padding:0 8px;border:1px solid #dce5df;border-radius:7px;background:#fff;color:#3c5648;font:inherit;font-size:10px;font-weight:650;cursor:pointer}
 .language-control select:focus-visible{outline:3px solid #2d9c6042;outline-offset:2px}
-.quality-controls{display:grid;grid-template-columns:auto minmax(110px,180px) 1fr;align-items:center;gap:10px;margin:12px 0 4px}
+.quality-controls{display:grid;grid-template-columns:auto minmax(160px,230px) 1fr;align-items:center;gap:10px;margin:12px 0 4px}
 .quality-controls .field-label,.quality-controls .field-hint{margin:0}
 .quality-controls select{height:34px;padding:0 9px;border:1px solid #dce5df;border-radius:7px;background:#fff;color:#35483d;font:inherit;font-size:12px}
 .quality-controls select:focus-visible{outline:3px solid #2d9c6042;outline-offset:2px}

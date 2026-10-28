@@ -66,7 +66,7 @@ class FakeClassList {
   }
 }
 
-function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, failLanguageSave = false, languageSaveResponse, runState, metalAvailable = false, metalDefault = false} = {}) {
+function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, failLanguageSave = false, languageSaveResponse, runState, metalAvailable = false, metalDefault = false, qualityDefault = 'balanced'} = {}) {
   const elements = new Map();
   const radios = ['standard', 'vivid'].map((value) => {
     const radio = new FakeElement(`look-${value}`);
@@ -129,7 +129,7 @@ function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, fai
       if (route === '/api/desktop-preferences') return {ok:true, status:200, payload:{language}};
       if (route === '/api/bootstrap' && failBootstrap.value) return {ok:false, status:500, payload:{error:'bootstrap unavailable'}};
       if (route === '/api/bootstrap') return {ok:true, status:200, payload:{
-        defaults:{input:'/input', output:'', look:'standard', recursive:false, metal:metalDefault}, metal_available:metalAvailable,
+        defaults:{input:'/input', output:'', look:'standard', recursive:false, metal:metalDefault, quality:qualityDefault}, metal_available:metalAvailable,
         library:{assets:[]}, catalog:[], supported_video_extensions:['MP4']
       }};
       if (route === '/api/state') return {ok:true, status:200, payload:{running:false, finished:false}};
@@ -157,7 +157,7 @@ function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, fai
       status = 500;
       payload = {error:'bootstrap unavailable'};
     } else if (route === '/api/bootstrap') {
-      payload = {defaults:{input:'/input', output:'', look:'standard', recursive:false, metal:metalDefault}, metal_available:metalAvailable, library:{assets:[]}, catalog:[], supported_video_extensions:['MP4']};
+      payload = {defaults:{input:'/input', output:'', look:'standard', recursive:false, metal:metalDefault, quality:qualityDefault}, metal_available:metalAvailable, library:{assets:[]}, catalog:[], supported_video_extensions:['MP4']};
     } else if (route === '/api/state') {
       payload = {running:false, finished:false};
     } else if (route === '/api/preview') {
@@ -344,6 +344,29 @@ test('quality changes invalidate a preview and survive language switches through
   const request = app.calls.findLast((call) => call.route === '/api/run');
   assert.equal(JSON.parse(request.body).quality, 'detail');
   assert.equal(app.element('quality').disabled, true);
+});
+
+test('lossless encoding keeps its setting, warning and optional Metal selection across language changes', async () => {
+  for (const desktop of [true, false]) {
+    const app = makeHarness({desktop, metalAvailable:true, qualityDefault:'preserve'});
+    await app.booted;
+    assert.equal(app.element('quality').value, 'preserve');
+    assert.match(app.element('quality-hint').textContent, /处理后的 10-bit YUV/);
+    await app.click('preview-button');
+    app.element('metal').checked = true;
+    await app.element('metal').dispatch('change');
+    assert.equal(app.element('run-button').disabled, true);
+    await app.setLanguage('en');
+    assert.equal(app.element('quality').value, 'preserve');
+    assert.match(app.element('quality-hint').textContent, /processed 10-bit YUV/);
+    await app.click('preview-button');
+    assert.match(app.element('run-settings').innerHTML, /Lossless encoding \(large files\)/);
+    await app.click('run-button');
+    const request = JSON.parse(app.calls.findLast((call) => call.route === '/api/run').body);
+    assert.equal(request.quality, 'preserve');
+    assert.equal(request.metal, true);
+    assert.equal(app.element('quality').disabled, true);
+  }
 });
 
 test('Metal is off by default and unavailable platforms cannot select it', async () => {

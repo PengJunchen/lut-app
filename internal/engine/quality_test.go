@@ -33,12 +33,37 @@ func TestQualityValidationAndExplicitCRFPreservation(t *testing.T) {
 func TestMetalConfigurationIsAnOptionalIndependentRequest(t *testing.T) {
 	input := t.TempDir()
 	for _, metal := range []bool{false, true} {
-		for _, quality := range []QualityMode{QualityBalanced, QualityDetail} {
+		for _, quality := range []QualityMode{QualityBalanced, QualityDetail, QualityPreserve} {
 			cfg, err := normalizeConfig(Config{Input: input, Metal: metal, Quality: quality, Look: LookVivid})
 			if err != nil || cfg.Metal != metal || cfg.Quality != quality || cfg.Look != LookVivid {
 				t.Fatalf("Metal must preserve the selected quality and look: %#v, %v", cfg.Config, err)
 			}
 		}
+	}
+}
+
+func TestLosslessEncodingRequiresX265AndKeepsExplicitPreset(t *testing.T) {
+	input := t.TempDir()
+	cfg, err := normalizeConfig(Config{Input: input, Quality: QualityPreserve})
+	if err != nil || cfg.Quality != QualityPreserve || cfg.preset != "ultrafast" {
+		t.Fatalf("lossless defaults: %#v, %v", cfg, err)
+	}
+	explicit, err := normalizeConfig(Config{Input: input, Quality: QualityPreserve, Preset: "fast"})
+	if err != nil || explicit.preset != "fast" {
+		t.Fatalf("explicit preset was changed: %#v, %v", explicit, err)
+	}
+	for _, platform := range [][2]string{{"darwin", "arm64"}, {"darwin", "amd64"}, {"windows", "amd64"}, {"linux", "amd64"}} {
+		got, err := defaultEncoderForPlatform(cfg, map[string]bool{"hevc_videotoolbox": true, "libx265": true}, platform[0], platform[1])
+		if err != nil || got != EncoderX265 {
+			t.Fatalf("lossless %v selected %q: %v", platform, got, err)
+		}
+		if _, err := defaultEncoderForPlatform(cfg, map[string]bool{"hevc_videotoolbox": true}, platform[0], platform[1]); err == nil {
+			t.Fatalf("lossless %v silently fell back without x265", platform)
+		}
+	}
+	cfg.Encoder = EncoderVideoToolbox
+	if _, err := defaultEncoderForPlatform(cfg, map[string]bool{"hevc_videotoolbox": true, "libx265": true}, "darwin", "arm64"); err == nil || !strings.Contains(err.Error(), "lossless") {
+		t.Fatalf("VideoToolbox must explicitly reject lossless encoding: %v", err)
 	}
 }
 

@@ -45,9 +45,9 @@ func inputColorFilter(file filePlan) string {
 	return fmt.Sprintf("scale=in_color_matrix=%s:out_color_matrix=bt709:in_range=%s:out_range=pc:flags=accurate_rnd+full_chroma_int,format=gbrpf32le", file.inputMatrix, file.inputRange)
 }
 
-const outputColorFilter = "scale=in_color_matrix=bt709:out_color_matrix=bt709:in_range=pc:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le"
+const outputColorFilter = "scale=in_color_matrix=bt709:out_color_matrix=bt709:in_range=pc:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le,setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
 
-const metalOutputFilter = outputColorFilter + ",setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+const metalOutputFilter = outputColorFilter
 
 func buildMetalCommands(cfg normalizedConfig, file filePlan, temp string, encoder EncoderMode) ([]string, []string) {
 	decode := []string{cfg.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-loglevel", "warning", "-copyts", "-hwaccel", "auto", "-i", file.source,
@@ -128,6 +128,12 @@ func runMetalFFmpeg(ctx context.Context, cfg normalizedConfig, file filePlan, te
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	decodeCommand, encodeCommand := buildMetalCommands(cfg, file, temp, encoder)
+	if cfg.referenceHash != "" {
+		encodeCommand, err = withPixelReference(encodeCommand, cfg.referenceHash)
+		if err != nil {
+			return "", err
+		}
+	}
 	decoder := newCommandContext(childCtx, decodeCommand[0], decodeCommand[1:]...)
 	width, height := file.video.Width, file.video.Height
 	if file.rotation == 90 || file.rotation == 270 {

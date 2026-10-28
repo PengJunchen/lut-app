@@ -121,6 +121,9 @@
     "quality.label": "编码画质",
     "quality.balanced": "均衡",
     "quality.detail": "细节优先",
+    "quality.preserve": "编码无损（大文件）",
+    "status.verifying": "正在校验保真输出…",
+    "quality.preserveHint": "解码后与处理后的 10-bit YUV 帧一致；文件可能很大、导出较慢。不会恢复 LUT 已压缩的暗部，也不是原片像素无损。",
     "quality.hint": "细节优先可减少重编码损失，但文件可能明显增大；不会改变 LUT 风格或恢复被 LUT 压暗的细节。",
     "quality.vividHint": "Vivid LUT 可能压缩暗部细节；暗光素材可考虑标准风格。",
     "metal.label": "Metal LUT 加速（实验性）",
@@ -286,6 +289,9 @@
     "quality.label": "Encoding quality",
     "quality.balanced": "Balanced",
     "quality.detail": "Detail priority",
+    "quality.preserve": "Lossless encoding (large files)",
+    "status.verifying": "Verifying lossless output…",
+    "quality.preserveHint": "Decoded output matches the processed 10-bit YUV frames. Files can be large and export slower. This does not restore detail compressed by the LUT or preserve the original camera pixels.",
     "quality.hint": "Detail priority reduces encoding loss but can create much larger files. It does not change the LUT look or recover detail darkened by the LUT.",
     "quality.vividHint": "Vivid LUTs may compress shadow detail. Consider Standard for low-light footage.",
     "metal.label": "Metal LUT acceleration (experimental)",
@@ -838,6 +844,7 @@
     '编码画质': 'quality.label',
     '均衡': 'quality.balanced',
     '细节优先': 'quality.detail',
+    '编码无损（大文件）': 'quality.preserve',
     '细节优先可减少重编码损失，但文件可能明显增大；不会改变 LUT 风格或恢复被 LUT 压暗的细节。': 'quality.hint',
     'Vivid LUT 可能压缩暗部细节；暗光素材可考虑标准风格。': 'quality.vividHint',
     'Metal LUT 加速（实验性）': 'metal.label',
@@ -1086,7 +1093,7 @@
       [/^input directory is required$/i, 'backend.emptyInput'],
       [/^output directory cannot be the input directory$/i, 'backend.invalidOutput'],
       [/^unsupported look "?(standard|vivid)"? \(expected standard or vivid\)$/i, 'backend.invalidLook'],
-      [/^unsupported quality .+ \(expected balanced or detail\)$/i, 'backend.invalidQuality']
+      [/^unsupported quality .+ \(expected balanced(?: or detail|, detail or preserve)\)$/i, 'backend.invalidQuality']
     ];
     for (const [pattern, wrappedKey] of wrapped) {
       const match = message.match(pattern);
