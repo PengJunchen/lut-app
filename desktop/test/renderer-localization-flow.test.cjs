@@ -66,7 +66,7 @@ class FakeClassList {
   }
 }
 
-function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, failLanguageSave = false, languageSaveResponse, runState} = {}) {
+function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, failLanguageSave = false, languageSaveResponse, runState, metalAvailable = false, metalDefault = false} = {}) {
   const elements = new Map();
   const radios = ['standard', 'vivid'].map((value) => {
     const radio = new FakeElement(`look-${value}`);
@@ -129,7 +129,7 @@ function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, fai
       if (route === '/api/desktop-preferences') return {ok:true, status:200, payload:{language}};
       if (route === '/api/bootstrap' && failBootstrap.value) return {ok:false, status:500, payload:{error:'bootstrap unavailable'}};
       if (route === '/api/bootstrap') return {ok:true, status:200, payload:{
-        defaults:{input:'/input', output:'', look:'standard', recursive:false},
+        defaults:{input:'/input', output:'', look:'standard', recursive:false, metal:metalDefault}, metal_available:metalAvailable,
         library:{assets:[]}, catalog:[], supported_video_extensions:['MP4']
       }};
       if (route === '/api/state') return {ok:true, status:200, payload:{running:false, finished:false}};
@@ -157,7 +157,7 @@ function makeHarness({desktop = true, language = 'zh-CN', failPreviewAt = 0, fai
       status = 500;
       payload = {error:'bootstrap unavailable'};
     } else if (route === '/api/bootstrap') {
-      payload = {defaults:{input:'/input', output:'', look:'standard', recursive:false}, library:{assets:[]}, catalog:[], supported_video_extensions:['MP4']};
+      payload = {defaults:{input:'/input', output:'', look:'standard', recursive:false, metal:metalDefault}, metal_available:metalAvailable, library:{assets:[]}, catalog:[], supported_video_extensions:['MP4']};
     } else if (route === '/api/state') {
       payload = {running:false, finished:false};
     } else if (route === '/api/preview') {
@@ -344,6 +344,50 @@ test('quality changes invalidate a preview and survive language switches through
   const request = app.calls.findLast((call) => call.route === '/api/run');
   assert.equal(JSON.parse(request.body).quality, 'detail');
   assert.equal(app.element('quality').disabled, true);
+});
+
+test('Metal is off by default and unavailable platforms cannot select it', async () => {
+  for (const desktop of [true, false]) {
+    const available = makeHarness({desktop, metalAvailable:true});
+    await available.booted;
+    assert.equal(available.element('metal').checked, false);
+    assert.equal(available.element('metal').disabled, false);
+    await available.click('preview-button');
+    assert.equal(JSON.parse(available.calls.findLast((call) => call.route === '/api/preview').body).metal, false);
+
+    const unavailable = makeHarness({desktop, metalDefault:true});
+    await unavailable.booted;
+    assert.equal(unavailable.element('metal').checked, false);
+    assert.equal(unavailable.element('metal').disabled, true);
+    await unavailable.setLanguage('en');
+    assert.equal(unavailable.element('metal-hint').textContent, 'Available only on Apple Silicon. Off by default.');
+    await unavailable.click('preview-button');
+    assert.equal(JSON.parse(unavailable.calls.findLast((call) => call.route === '/api/preview').body).metal, false);
+  }
+});
+
+test('Metal opt-in survives locale and reconnect, invalidates previews, and locks during processing', async () => {
+  const app = makeHarness({metalAvailable:true});
+  await app.booted;
+  await app.click('preview-button');
+  app.element('metal').checked = true;
+  await app.element('metal').dispatch('change');
+  assert.equal(app.element('run-button').disabled, true);
+  await app.setLanguage('en');
+  assert.equal(app.element('metal').checked, true);
+  await app.click('reconnect-button');
+  assert.equal(app.element('metal').checked, true);
+  await app.click('preview-button');
+  assert.match(app.element('run-settings').innerHTML, /Metal: On \(experimental\)/);
+  await app.click('run-button');
+  assert.equal(JSON.parse(app.calls.findLast((call) => call.route === '/api/run').body).metal, true);
+  assert.equal(app.element('metal').disabled, true);
+});
+
+test('an explicit Metal CLI default is honored only when the platform supports it', async () => {
+  const app = makeHarness({metalAvailable:true, metalDefault:true});
+  await app.booted;
+  assert.equal(app.element('metal').checked, true);
 });
 
 test('classic-mode preview stays visible and does not rerun when the locale changes', async () => {

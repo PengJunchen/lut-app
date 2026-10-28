@@ -37,6 +37,7 @@ type Config struct {
 	Recursive     bool        `json:"recursive"`
 	Look          Look        `json:"look,omitempty"`
 	Quality       QualityMode `json:"quality,omitempty"`
+	Metal         bool        `json:"metal,omitempty"`
 	FFmpeg        string      `json:"ffmpeg,omitempty"`
 	FFprobe       string      `json:"ffprobe,omitempty"`
 	LUTDir        string      `json:"lut_dir,omitempty"`
@@ -120,6 +121,7 @@ type ItemReport struct {
 	LUTSHA256       string  `json:"lut_sha256,omitempty"`
 	SourceGamma     string  `json:"source_gamma,omitempty"`
 	Encoder         string  `json:"encoder,omitempty"`
+	LUTBackend      string  `json:"lut_backend,omitempty"`
 	Reason          string  `json:"reason,omitempty"`
 	InputBytes      int64   `json:"input_bytes"`
 	OutputBytes     int64   `json:"output_bytes,omitempty"`

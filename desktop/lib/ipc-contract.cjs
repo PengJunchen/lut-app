@@ -74,7 +74,7 @@ function validateBody(route, bodyKind, body, language) {
     return;
   }
   if (bodyKind === 'options') {
-    rejectUnknownKeys(body, new Set(['input', 'output', 'look', 'quality', 'recursive']), language);
+    rejectUnknownKeys(body, new Set(['input', 'output', 'look', 'quality', 'metal', 'recursive']), language);
     validateOptionalString(body.input, 'ipc.sourceFolderInvalid', MAX_PATH_LENGTH, language);
     validateOptionalString(body.output, 'ipc.outputFolderInvalid', MAX_PATH_LENGTH, language);
     if (body.look !== undefined && body.look !== 'standard' && body.look !== 'vivid') {
@@ -85,6 +85,9 @@ function validateBody(route, bodyKind, body, language) {
     }
     if (body.quality !== undefined && body.quality !== 'balanced' && body.quality !== 'detail') {
       throw new Error(translate('ipc.qualityInvalid', language));
+    }
+    if (body.metal !== undefined && typeof body.metal !== 'boolean') {
+      throw new Error(translate('ipc.metalInvalid', language));
     }
     return;
   }

@@ -23,6 +23,7 @@ type frontendRequest struct {
 	Output    string             `json:"output"`
 	Look      engine.Look        `json:"look"`
 	Quality   engine.QualityMode `json:"quality"`
+	Metal     bool               `json:"metal"`
 	Recursive bool               `json:"recursive"`
 }
 
@@ -54,6 +55,7 @@ type appState struct {
 	OutputRoot  string             `json:"output_root,omitempty"`
 	Look        engine.Look        `json:"look,omitempty"`
 	Quality     engine.QualityMode `json:"quality,omitempty"`
+	Metal       bool               `json:"metal,omitempty"`
 	Recursive   bool               `json:"recursive"`
 	Items       []stateItem        `json:"items"`
 	Summary     engine.Summary     `json:"summary"`
@@ -70,6 +72,7 @@ type application struct {
 	defaultOutput    string
 	defaultLook      engine.Look
 	defaultQuality   engine.QualityMode
+	defaultMetal     bool
 	defaultRecursive bool
 	closing          bool
 	previewing       bool
@@ -105,6 +108,7 @@ func newApplication(base engine.Config, catalog []engine.LUTSpec, defaultInput s
 		defaultOutput:    defaultOutput,
 		defaultLook:      defaultLook,
 		defaultQuality:   defaultQuality,
+		defaultMetal:     base.Metal,
 		defaultRecursive: base.Recursive,
 		folderPicker:     folderpicker.New(),
 		state:            appState{Items: []stateItem{}, Logs: []string{}},
@@ -120,9 +124,11 @@ func (a *application) Bootstrap() any {
 			"output":    a.defaultOutput,
 			"look":      a.defaultLook,
 			"quality":   a.defaultQuality,
+			"metal":     a.defaultMetal,
 			"recursive": a.defaultRecursive,
 		},
 		"catalog":                    a.catalog,
+		"metal_available":            runtime.GOOS == "darwin" && runtime.GOARCH == "arm64",
 		"library":                    loadLibrary(assets.FS),
 		"supported_video_extensions": engine.SupportedVideoExtensions(),
 	}
@@ -246,6 +252,7 @@ func (a *application) Preview(ctx context.Context, raw json.RawMessage) (any, er
 		OutputRoot: plan.OutputRoot,
 		Look:       plan.Look,
 		Quality:    cfg.Quality,
+		Metal:      cfg.Metal,
 		Recursive:  request.Recursive,
 		Items:      makeStateItems(plan.Items, false),
 		Summary:    engine.Summary{Total: len(plan.Items)},
@@ -296,6 +303,7 @@ func (a *application) Start(ctx context.Context, raw json.RawMessage) (any, erro
 		OutputRoot: plan.OutputRoot,
 		Look:       plan.Look,
 		Quality:    cfg.Quality,
+		Metal:      cfg.Metal,
 		Recursive:  request.Recursive,
 		Items:      makeStateItems(plan.Items, true),
 		Total:      len(plan.Items),
@@ -638,6 +646,7 @@ func (a *application) configFor(request frontendRequest) (engine.Config, error) 
 	cfg.Output = request.Output
 	cfg.Look = request.Look
 	cfg.Quality = request.Quality
+	cfg.Metal = request.Metal
 	cfg.Recursive = request.Recursive
 	if err := cfg.Validate(); err != nil {
 		return engine.Config{}, err
@@ -672,7 +681,7 @@ func makeStateItems(items []engine.ItemPlan, pending bool) []stateItem {
 }
 
 func sameRequestConfig(left, right engine.Config) bool {
-	return sameInput(left.Input, right.Input) && sameInput(left.Output, right.Output) && left.Look == right.Look && left.Quality == right.Quality && left.Recursive == right.Recursive
+	return sameInput(left.Input, right.Input) && sameInput(left.Output, right.Output) && left.Look == right.Look && left.Quality == right.Quality && left.Metal == right.Metal && left.Recursive == right.Recursive
 }
 
 func sameInput(left, right string) bool {

@@ -47,6 +47,7 @@
   let libraryCatalog = [];
   let catalogEntries = [];
   let latestBootstrap = null;
+  let metalAvailable = false;
   let currentPlan = null;
   let desktopPreferenceReady = !isDesktop;
   let hasCompleteLibrary = false;
@@ -90,7 +91,7 @@
   const esc = (value) => text(value).replace(/[&<>"']/g, (char) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
   const baseName = (path) => text(path).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || text(path);
   const selectedLook = () => document.querySelector('input[name="look"]:checked')?.value || 'standard';
-  const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), quality: $('quality').value === 'detail' ? 'detail' : 'balanced', recursive: $('recursive').checked});
+  const settings = () => ({input: inputPath.value.trim(), output: outputPath.value.trim(), look: selectedLook(), quality: $('quality').value === 'detail' ? 'detail' : 'balanced', metal: metalAvailable && $('metal').checked, recursive: $('recursive').checked});
   const api = async (route, options = {}) => {
     if (isDesktop) {
       const languagePreferenceWrite = route === '/api/desktop-language' && (options.method || 'GET') === 'POST';
@@ -273,6 +274,7 @@
     for (const id of ['input-path', 'output-path', 'input-select-button', 'output-select-button', 'output-reset-button', 'recursive', 'quality']) {
       $(id).disabled = locked || unavailable;
     }
+    $('metal').disabled = locked || unavailable || !metalAvailable;
     document.querySelectorAll('input[name="look"]').forEach((node) => node.disabled = locked || unavailable);
     previewButton.disabled = locked || unavailable || !inputPath.value.trim();
     runButton.disabled = locked || unavailable || !hasPreview;
@@ -428,6 +430,7 @@
   outputPath.addEventListener('input', () => { invalidatePreview(); syncControls(); });
   $('recursive').addEventListener('change', invalidatePreview);
   $('quality').addEventListener('change', invalidatePreview);
+  $('metal').addEventListener('change', invalidatePreview);
   document.querySelectorAll('input[name="look"]').forEach((node) => node.addEventListener('change', invalidatePreview));
   $('input-select-button').addEventListener('click', () => chooseFolder('input'));
   $('output-select-button').addEventListener('click', () => chooseFolder('output'));
@@ -704,6 +707,10 @@
     details.classList.remove('hidden');
   }
   function renderBootstrapResources(bootstrap, preservePages = false) {
+    metalAvailable = val(bootstrap, 'metal_available', 'MetalAvailable') === true;
+    if (!metalAvailable) $('metal').checked = false;
+    $('metal-hint').textContent = t(metalAvailable ? 'metal.hint' : 'metal.unavailableHint');
+    syncControls();
     const library = val(bootstrap, 'library', 'Library');
     const catalog = val(bootstrap, 'catalog', 'Catalog') || [];
     indexLibraryCameraNames(library);
@@ -796,6 +803,7 @@
     if (!reason) return t('generic.dash');
     const waiting = preview || ['pending', 'running', 'planned_copy', 'planned_encode'].includes(text(val(item, 'status', 'Status')).toLowerCase());
     const reviewOutcome = waiting ? t('reason.reviewPlanned') : t('reason.reviewCopied');
+    if (/Metal LUT fallback:/i.test(reason)) return t('reason.metalFallback');
     if (/VideoToolbox failed; x265 fallback succeeded/i.test(reason)) return t('reason.hardwareFallback');
     if (/output exists; source and LUT\/look match the previously verified result/i.test(reason)) return t('reason.verifiedExisting');
     if (/output exists; preserved because no matching prior report/i.test(reason)) return t('reason.noPriorReport');
@@ -926,11 +934,12 @@
     const output = text(val(plan, 'output_root', 'outputRoot', 'OutputRoot'), finalOutputDestination());
     const look = text(val(plan, 'look', 'Look'), settings().look);
     const quality = text(val(plan, 'quality', 'Quality'), settings().quality);
+    const metal = Boolean(val(plan, 'metal', 'Metal') ?? settings().metal);
     const recursive = Boolean(val(plan, 'recursive', 'Recursive') ?? settings().recursive);
     const restoreCount = items.filter(willEncode).length;
     const copyCount = Math.max(0, items.length - restoreCount);
     const reviewCount = items.filter((item) => !willEncode(item) && needsReview(item)).length;
-    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.quality', {quality:t(quality === 'detail' ? 'quality.detail' : 'quality.balanced')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
+    $('run-settings').innerHTML = `<span class="setting-chip" title="${esc(t('preview.inputPath', {path: input}))}">${esc(t('preview.inputPath', {path: input}))}</span><span class="setting-chip" title="${esc(t('preview.outputPath', {path: output}))}">${esc(t('preview.outputPath', {path: output}))}</span><span class="setting-chip">${esc(t('preview.look', {look: look === 'vivid' ? lookLabel('vivid') : lookLabel('standard')}))}</span><span class="setting-chip">${esc(t('preview.quality', {quality:t(quality === 'detail' ? 'quality.detail' : 'quality.balanced')}))}</span><span class="setting-chip">${esc(t('preview.metal', {mode:t(metal ? 'metal.enabled' : 'metal.disabled')}))}</span><span class="setting-chip">${esc(t('preview.subfolders', {value: recursive ? t('preview.includes') : t('preview.excludes')}))}</span>`;
     $('preview-count').textContent = t('video.count', {count: items.length});
     $('preview-restore-count').textContent = restoreCount;
     $('preview-copy-count').textContent = copyCount;
@@ -971,7 +980,8 @@
       ['No videos found', 'engineLog.noVideos'],
       ['Processing cancelled', 'engineLog.processingCancelled'],
       ['Processing complete', 'engineLog.processingComplete'],
-      ['Encoding and validation complete', 'engineLog.encodingComplete']
+      ['Encoding and validation complete', 'engineLog.encodingComplete'],
+      ['Metal LUT unavailable; retrying with CPU LUT', 'engineLog.metalFallback']
     ]);
     const exactKey = fixed.get(line);
     if (exactKey) return t(exactKey);
@@ -1394,6 +1404,7 @@
       $('quality').value = val(defaults,'quality','Quality') === 'detail' ? 'detail' : 'balanced';
       latestBootstrap = boot;
       renderBootstrapResources(boot);
+      $('metal').checked = metalAvailable && val(defaults,'metal','Metal') === true;
       updateOutputDestination();
       $('footer-status').textContent = t(isDesktop ? 'connection.desktopReady' : 'state.localReady');
       await refreshState({recover:true});

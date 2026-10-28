@@ -93,6 +93,7 @@ const messages = Object.freeze({
   'ipc.outputFolderInvalid': ['结果目录无效', 'Output folder is invalid'],
   'ipc.lookInvalid': ['LUT 风格无效', 'LUT style is invalid'],
   'ipc.qualityInvalid': ['编码画质无效', 'Encoding quality is invalid'],
+  'ipc.metalInvalid': ['Metal 加速选项无效', 'Metal acceleration option is invalid'],
   'ipc.scanInvalid': ['扫描选项无效', 'Scan option is invalid'],
   'ipc.folderTargetInvalid': ['文件夹选择目标无效', 'Folder selection target is invalid'],
   'ipc.folderPathInvalid': ['文件夹路径无效', 'Folder path is invalid'],

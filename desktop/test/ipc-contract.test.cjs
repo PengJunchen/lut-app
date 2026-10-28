@@ -88,3 +88,16 @@ test('encoding quality is explicitly selected from the supported modes', () => {
     }, 'en'), {message:'Encoding quality is invalid'});
   }
 });
+
+test('Metal acceleration requests accept only boolean opt-in values', () => {
+  for (const metal of [true, false]) {
+    assert.equal(parseInvocation('/api/preview', {
+      method:'POST', body:JSON.stringify({input:'/source', metal}),
+    }).body.metal, metal);
+  }
+  for (const metal of [null, 'true', 1, {}, []]) {
+    assert.throws(() => parseInvocation('/api/run', {
+      method:'POST', body:JSON.stringify({input:'/source', metal}),
+    }, 'en'), {message:'Metal acceleration option is invalid'});
+  }
+});
