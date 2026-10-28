@@ -1,8 +1,8 @@
 # 界面本地化 / Interface localization
 
-当前源码构建支持中文（`zh-CN`）和 English（`en`）。页面顶部的语言选择器在分步模式和经典模式都可用，切换不会改变目录、风格、有效预览、处理任务或导出报告。已发布的 `rc0.0.1` 下载包仍为中文界面，本次功能尚未发行。
+`rc0.0.2` 及更新版本支持中文（`zh-CN`）和 English（`en`）。页面顶部的语言选择器在分步模式和经典模式都可用，切换不会改变目录、风格、有效预览、处理任务或导出报告。旧版 `rc0.0.1` 下载包仍为中文界面。
 
-Current source builds support Chinese (`zh-CN`) and English (`en`). The header language selector works in both guided and classic modes. Switching preserves folders, the selected look, a valid preview, the active batch and exported reports. The published `rc0.0.1` downloads still use the Chinese interface; this feature has not been released yet.
+Release packages from `rc0.0.2` support Chinese (`zh-CN`) and English (`en`). The header language selector works in both guided and classic modes. Switching preserves folders, the selected look, a valid preview, the active batch and exported reports. The older `rc0.0.1` downloads still use the Chinese interface.
 
 ## 偏好与失败处理 / Preferences and failures
 
