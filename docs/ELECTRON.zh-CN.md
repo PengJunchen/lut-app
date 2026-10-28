@@ -36,6 +36,8 @@ npm test
 
 桌面窗口使用 `desktop/.generated/<平台>/engine` 作为本地 Go 引擎。先准备与本机平台对应的 FFmpeg，再导入所需 LUT 文件，然后构建引擎并启动窗口：
 
+Apple Silicon 构建还需要 Xcode 命令行工具。脚本会用 Swift 编译并以 ad-hoc 方式签名 Metal LUT 辅助程序，将它随运行时归档打包；用户运行应用无需安装 Swift 或 Xcode。Metal 加速默认关闭，使用方式见[操作说明](USAGE.zh-CN.md)；其他平台不打包此辅助程序。
+
 ```sh
 python3 packaging/prepare_runtime.py darwin-arm64
 python3 packaging/prepare_luts.py

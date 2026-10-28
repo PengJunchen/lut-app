@@ -21,9 +21,10 @@ type Probe struct {
 }
 
 type ProbeFormat struct {
-	Duration string            `json:"duration"`
-	BitRate  string            `json:"bit_rate"`
-	Tags     map[string]string `json:"tags"`
+	StartTime string            `json:"start_time"`
+	Duration  string            `json:"duration"`
+	BitRate   string            `json:"bit_rate"`
+	Tags      map[string]string `json:"tags"`
 }
 
 type Stream struct {

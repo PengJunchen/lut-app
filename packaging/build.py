@@ -12,6 +12,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 import tarfile
 import zipfile
 
@@ -88,10 +89,23 @@ def allowed_license(path: Path) -> bool:
     return path.is_file() and "license-output" not in name and ("license" in name or "copying" in name)
 
 
+def build_metal_helper(cache: Path) -> Path:
+    if sys.platform != "darwin":
+        raise SystemExit("The Apple Silicon Metal helper must be built on macOS with Xcode command line tools")
+    destination = cache / "bin" / "metal-lut"
+    run(["xcrun", "swiftc", "-O", "-target", "arm64-apple-macos13.0",
+         "native/metal-lut/main.swift", "-framework", "Metal", "-o", str(destination)])
+    run(["codesign", "--force", "--sign", "-", str(destination)])
+    run(["codesign", "--verify", "--strict", str(destination)])
+    return destination
+
+
 def archive_runtime(target: str) -> Path:
     spec, cache = runtime_metadata(target)
     extension = ".exe" if target.startswith("windows-") else ""
     files = [cache / "bin" / (name + extension) for name in ("ffmpeg", "ffprobe")]
+    if target == "darwin-arm64":
+        files.append(build_metal_helper(cache))
     files.append(cache / "metadata-tools.json")
     licenses = cache / "licenses"
     if licenses.is_dir():

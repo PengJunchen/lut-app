@@ -224,7 +224,7 @@ func cancelledItem(file filePlan, err error) ItemReport {
 
 func processFile(ctx context.Context, cfg normalizedConfig, file filePlan, previous Report, encoders map[string]bool, emit func(Event), progress func(float64)) (ItemReport, error) {
 	item := reportFromPlan(file)
-	item.ConfigKey = configKey(file, cfg.Look, cfg.Quality)
+	item.ConfigKey = configKey(file, cfg.Look, cfg.Quality, cfg.Metal)
 	if err := ctx.Err(); err != nil {
 		return item, err
 	}
@@ -405,6 +405,7 @@ func skipExisting(ctx context.Context, item ItemReport, file filePlan, previous 
 	item.SourceMetadata = old.SourceMetadata
 	item.LogFile = old.LogFile
 	item.Encoder = old.Encoder
+	item.LUTBackend = old.LUTBackend
 	item.Reason = "output exists; source and LUT/look match the previously verified result"
 	return item, nil
 }
@@ -435,10 +436,13 @@ func loadPreviousReport(path string) Report {
 	return report
 }
 
-func configKey(file filePlan, look Look, quality QualityMode) string {
+func configKey(file filePlan, look Look, quality QualityMode, metal bool) string {
 	key := strings.Join([]string{file.profile, file.camera, string(look), file.public.LUTSHA256, file.inputRange, file.inputMatrix}, "|")
 	if file.public.Action == ActionEncode && quality == QualityDetail {
 		key += "|quality=detail-v1"
+	}
+	if file.public.Action == ActionEncode && metal {
+		key += "|lut=metal-v1"
 	}
 	return key
 }
@@ -612,6 +616,10 @@ func clamp(value, min, max float64) float64 {
 }
 
 func runFFmpeg(ctx context.Context, command []string, duration float64, progress func(float64), logPath string) (string, error) {
+	return runFFmpegInput(ctx, command, duration, progress, logPath, nil)
+}
+
+func runFFmpegInput(ctx context.Context, command []string, duration float64, progress func(float64), logPath string, input io.Reader) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return "", err
 	}
@@ -621,6 +629,7 @@ func runFFmpeg(ctx context.Context, command []string, duration float64, progress
 	}
 	defer logFile.Close()
 	cmd := newCommandContext(ctx, command[0], command[1:]...)
+	cmd.Stdin = input
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", err
@@ -710,7 +719,7 @@ func lastN(lines []string, n int) []string {
 }
 
 func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encoder EncoderMode) []string {
-	filter := fmt.Sprintf("scale=in_color_matrix=%s:out_color_matrix=bt709:in_range=%s:out_range=pc:flags=accurate_rnd+full_chroma_int,format=gbrpf32le,lut3d=file=%s:interp=tetrahedral,scale=in_color_matrix=bt709:out_color_matrix=bt709:in_range=pc:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p10le", file.inputMatrix, file.inputRange, escapeFilterPath(file.lut.File))
+	filter := inputColorFilter(file) + fmt.Sprintf(",lut3d=file=%s:interp=tetrahedral,", escapeFilterPath(file.lut.File)) + outputColorFilter
 	command := []string{
 		cfg.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-loglevel", "warning", "-progress", "pipe:1", "-y",
 	}
@@ -834,6 +843,7 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 	}
 	initialEncoder := encoder
 	var fallbackReason string
+	var metalFallback string
 	var outputProbe Probe
 	var tempName string
 	var outputHash string
@@ -855,7 +865,21 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 		logRel := filepath.Join("logs", filepath.FromSlash(file.relative)+".ffmpeg.log")
 		logPath := filepath.Join(cfg.outputRoot, logRel)
 		item.LogFile = filepath.ToSlash(logRel)
-		stderrTail, encodeErr := runFFmpeg(ctx, command, file.duration, progress, logPath)
+		var stderrTail string
+		var encodeErr error
+		if cfg.Metal && metalFallback == "" {
+			stderrTail, encodeErr = runMetalFFmpeg(ctx, cfg, filterFile, tempName, encoder, progress, logPath)
+			if encodeErr != nil && ctx.Err() == nil {
+				metalFallback = encodeErr.Error()
+				logMetalFallback(logPath, metalFallback)
+				if emit != nil {
+					emit(Event{Type: "item_progress", Path: file.relative, Message: "Metal LUT unavailable; retrying with CPU LUT"})
+				}
+			}
+		}
+		if !cfg.Metal || metalFallback != "" {
+			stderrTail, encodeErr = runFFmpeg(ctx, command, file.duration, progress, logPath)
+		}
 		if encodeErr == nil {
 			if strings.EqualFold(filepath.Ext(file.output), ".mkv") {
 				var sourcePackets Probe
@@ -882,6 +906,9 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 				encodeErr = fmt.Errorf("output validation failed: %s", strings.Join(problems, "; "))
 			}
 		}
+		if encodeErr == nil && cfg.Metal && metalFallback == "" {
+			encodeErr = validateMetalPresentationTimes(ctx, cfg, file, tempName)
+		}
 		if encodeErr == nil {
 			outputHash, encodeErr = hashFile(tempName)
 		}
@@ -892,6 +919,15 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 			break
 		}
 		os.Remove(tempName)
+		if cfg.Metal && metalFallback == "" && ctx.Err() == nil {
+			// A completed Metal process must still pass the same output checks.
+			// Retry the CPU LUT with the same encoder before considering an
+			// encoder fallback, and never publish a failed candidate.
+			metalFallback = encodeErr.Error()
+			logMetalFallback(logPath, metalFallback)
+			attempt--
+			continue
+		}
 		if attempt == 0 && cfg.Encoder == EncoderAuto && initialEncoder == EncoderVideoToolbox && encoder == EncoderVideoToolbox && encoders["libx265"] && ctx.Err() == nil {
 			fallbackReason = encodeErr.Error()
 			encoder = EncoderX265
@@ -923,6 +959,13 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 	item.OutputVerified = true
 	if fallbackReason != "" {
 		item.Reason = "VideoToolbox failed; x265 fallback succeeded: " + fallbackReason
+	}
+	if cfg.Metal {
+		item.LUTBackend = "metal"
+		if metalFallback != "" {
+			item.LUTBackend = "cpu"
+			item.Reason = strings.TrimSpace(item.Reason + "; Metal LUT fallback: " + metalFallback)
+		}
 	}
 	if emit != nil {
 		emit(Event{Type: "item_progress", Path: file.relative, Percent: 100, Message: "Encoding and validation complete"})

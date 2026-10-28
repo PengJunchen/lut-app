@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -131,6 +132,46 @@ func TestQualityDefaultsValidationAndPreviewInvalidation(t *testing.T) {
 	}
 	if _, err := parseCLI([]string{"--quality", "invalid"}, input); err == nil {
 		t.Fatal("unsupported CLI quality was accepted")
+	}
+}
+
+func TestMetalDefaultsCLIAndPreviewInvalidation(t *testing.T) {
+	input := t.TempDir()
+	app := newApplication(engine.Config{Manifest: testManifest()}, nil, input)
+	boot := app.Bootstrap().(map[string]any)
+	if boot["defaults"].(map[string]any)["metal"] != false {
+		t.Fatal("Metal must be off unless explicitly requested")
+	}
+	if want := runtime.GOOS == "darwin" && runtime.GOARCH == "arm64"; boot["metal_available"] != want {
+		t.Fatalf("Metal availability = %v, want %v", boot["metal_available"], want)
+	}
+	request := json.RawMessage(`{"input":` + quoteJSON(t, input) + `,"metal":false}`)
+	if _, err := app.Preview(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	changed := json.RawMessage(`{"input":` + quoteJSON(t, input) + `,"metal":true}`)
+	if _, err := app.Start(t.Context(), changed); err == nil || !strings.Contains(err.Error(), "设置已改变") {
+		t.Fatalf("changed Metal request must invalidate preview: %v", err)
+	}
+	for _, enabled := range []bool{false, true} {
+		cfg, err := app.configFor(frontendRequest{Input: input, Metal: enabled})
+		if err != nil || cfg.Metal != enabled {
+			t.Fatalf("Metal request %v = %v, %v", enabled, cfg.Metal, err)
+		}
+	}
+	for _, args := range [][]string{nil, {"--metal=false"}, {"--metal"}} {
+		opts, err := parseCLI(args, input)
+		want := len(args) > 0 && args[0] == "--metal"
+		if err != nil || opts.metal != want {
+			t.Fatalf("CLI args %v Metal = %v, %v", args, opts.metal, err)
+		}
+	}
+	if _, err := parseCLI([]string{"--metal=invalid"}, input); err == nil {
+		t.Fatal("non-boolean Metal CLI option was accepted")
+	}
+	explicit := newApplication(engine.Config{Metal: true}, nil, input).Bootstrap().(map[string]any)
+	if explicit["defaults"].(map[string]any)["metal"] != true {
+		t.Fatal("explicit CLI opt-in must reach the browser defaults")
 	}
 }
 

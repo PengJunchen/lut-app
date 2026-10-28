@@ -30,6 +30,18 @@ func TestQualityValidationAndExplicitCRFPreservation(t *testing.T) {
 	}
 }
 
+func TestMetalConfigurationIsAnOptionalIndependentRequest(t *testing.T) {
+	input := t.TempDir()
+	for _, metal := range []bool{false, true} {
+		for _, quality := range []QualityMode{QualityBalanced, QualityDetail} {
+			cfg, err := normalizeConfig(Config{Input: input, Metal: metal, Quality: quality, Look: LookVivid})
+			if err != nil || cfg.Metal != metal || cfg.Quality != quality || cfg.Look != LookVivid {
+				t.Fatalf("Metal must preserve the selected quality and look: %#v, %v", cfg.Config, err)
+			}
+		}
+	}
+}
+
 func TestDetailQualitySelectsSupportedPlatformEncoder(t *testing.T) {
 	available := map[string]bool{"hevc_videotoolbox": true, "libx265": true}
 	for _, tc := range []struct {
@@ -74,8 +86,8 @@ func TestDifferentEncodingQualityPreservesExistingOutputForReview(t *testing.T) 
 		t.Fatal(err)
 	}
 	file := filePlan{source: source, output: output, relative: "input.mp4", public: ItemPlan{Action: ActionEncode}}
-	balanced := configKey(file, LookStandard, QualityBalanced)
-	detail := configKey(file, LookStandard, QualityDetail)
+	balanced := configKey(file, LookStandard, QualityBalanced, false)
+	detail := configKey(file, LookStandard, QualityDetail, false)
 	if balanced == detail {
 		t.Fatal("encoding quality must be part of resume identity")
 	}
@@ -91,7 +103,7 @@ func TestDifferentEncodingQualityPreservesExistingOutputForReview(t *testing.T) 
 		t.Fatalf("existing result was changed: %q, %v", contents, err)
 	}
 	file.public.Action = ActionCopy
-	if configKey(file, LookStandard, QualityBalanced) != configKey(file, LookStandard, QualityDetail) {
+	if configKey(file, LookStandard, QualityBalanced, false) != configKey(file, LookStandard, QualityDetail, false) {
 		t.Fatal("encoding quality must not invalidate byte copies")
 	}
 }
