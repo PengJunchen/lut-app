@@ -48,6 +48,7 @@ type appState struct {
 	Finished    bool               `json:"finished"`
 	Cancelled   bool               `json:"cancelled"`
 	CurrentFile string             `json:"current_file,omitempty"`
+	Stage       string             `json:"stage,omitempty"`
 	Percent     float64            `json:"percent"`
 	Completed   int                `json:"completed"`
 	Total       int                `json:"total"`
@@ -361,6 +362,14 @@ func (a *application) run(ctx context.Context, cancel context.CancelFunc, cfg en
 func (a *application) onEvent(event engine.Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if event.Stage != "" {
+		a.state.Stage = event.Stage
+	}
+	if event.Type == "item_started" {
+		a.state.Stage = "encoding"
+	} else if event.Type == "item_completed" || event.Type == "batch_completed" || event.Type == "batch_cancelled" {
+		a.state.Stage = ""
+	}
 	if event.Path != "" {
 		a.state.CurrentFile = event.Path
 	}

@@ -406,6 +406,10 @@ func skipExisting(ctx context.Context, item ItemReport, file filePlan, previous 
 	item.LogFile = old.LogFile
 	item.Encoder = old.Encoder
 	item.LUTBackend = old.LUTBackend
+	item.EncodingLossless = old.EncodingLossless
+	item.PixelSHA256 = old.PixelSHA256
+	item.ReadbackDecoder = old.ReadbackDecoder
+	item.ReadbackSoftwareRetry = old.ReadbackSoftwareRetry
 	item.Reason = "output exists; source and LUT/look match the previously verified result"
 	return item, nil
 }
@@ -440,6 +444,16 @@ func configKey(file filePlan, look Look, quality QualityMode, metal bool) string
 	key := strings.Join([]string{file.profile, file.camera, string(look), file.public.LUTSHA256, file.inputRange, file.inputMatrix}, "|")
 	if file.public.Action == ActionEncode && quality == QualityDetail {
 		key += "|quality=detail-v1"
+	}
+	if file.public.Action == ActionEncode && quality == QualityPreserve {
+		key += "|quality=preserve-v1"
+	}
+	if file.public.Action == ActionEncode && quality == QualityBalanced {
+		source, _ := strconv.ParseInt(sourceBitrate(file.video), 10, 64)
+		budget, _ := strconv.ParseInt(videoToolboxBitrate(file.video), 10, 64)
+		if source > 0 && source < budget {
+			key += "|vt-budget=v2"
+		}
 	}
 	if file.public.Action == ActionEncode && metal {
 		key += "|lut=metal-v1"
@@ -692,7 +706,7 @@ func runFFmpegInput(ctx context.Context, command []string, duration float64, pro
 		return strings.Join(lastN(stderrTail, 8), " | "), fmt.Errorf("ffmpeg exited: %w", waitErr)
 	}
 	if progress != nil {
-		progress(100)
+		progress(99.9)
 	}
 	return strings.Join(lastN(stderrTail, 8), " | "), nil
 }
@@ -723,7 +737,7 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 	command := []string{
 		cfg.ffmpeg, "-hide_banner", "-nostdin", "-nostats", "-loglevel", "warning", "-progress", "pipe:1", "-y",
 	}
-	if runtime.GOOS == "darwin" && encoder == EncoderVideoToolbox {
+	if runtime.GOOS == "darwin" && (encoder == EncoderVideoToolbox || cfg.Quality == QualityPreserve) {
 		// Auto permits software decoding when the input is unsupported by the
 		// hardware decoder. The LUT filter still receives software frames.
 		command = append(command, "-hwaccel", "auto")
@@ -739,16 +753,7 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 	}
 	container := strings.ToLower(filepath.Ext(file.output))
 	if encoder == EncoderVideoToolbox {
-		bitrate := sourceBitrate(file.video)
-		if bitrate == "" {
-			pixels := float64(file.video.Width * file.video.Height)
-			fps := frameRate(file.video)
-			if fps <= 0 {
-				fps = 30
-			}
-			value := int64(clamp(pixels*fps*.1, 8e6, 160e6))
-			bitrate = strconv.FormatInt(value, 10)
-		}
+		bitrate := videoToolboxBitrate(file.video)
 		command = append(command, "-c:v", "hevc_videotoolbox", "-pix_fmt", "p010le", "-profile:v", "main10")
 		if cfg.Quality == QualityDetail {
 			command = append(command, "-q:v", "90")
@@ -756,8 +761,16 @@ func buildFFmpegCommand(cfg normalizedConfig, file filePlan, temp string, encode
 			command = append(command, "-b:v", bitrate)
 		}
 	} else {
-		command = append(command, "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-profile:v", "main10", "-crf", strconv.Itoa(cfg.crf), "-preset", cfg.preset)
-		command = append(command, "-x265-params", "colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited")
+		command = append(command, "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-profile:v", "main10", "-preset", cfg.preset)
+		parameters := "colorprim=bt709:transfer=bt709:colormatrix=bt709:range=limited"
+		if cfg.Quality == QualityPreserve {
+			workers := losslessWorkers(runtime.GOMAXPROCS(0))
+			parameters += fmt.Sprintf(":lossless=1:bframes=0:pools=%d:frame-threads=%d:log-level=error", workers, min(workers, 2))
+			command = append(command, "-enc_time_base:v", "demux")
+		} else {
+			command = append(command, "-crf", strconv.Itoa(cfg.crf))
+		}
+		command = append(command, "-x265-params", parameters)
 	}
 	command = append(command,
 		"-metadata", gammaTag+"=Rec.709", "-metadata", "source_gamma="+file.gamma,
@@ -788,6 +801,23 @@ func sourceBitrate(stream Stream) string {
 		return strconv.FormatInt(value, 10)
 	}
 	return ""
+}
+
+func videoToolboxBitrate(stream Stream) string {
+	pixels := float64(stream.Width) * float64(stream.Height)
+	fps := frameRate(stream)
+	if fps <= 0 {
+		fps = 30
+	}
+	budget := int64(clamp(pixels*fps*.1, 8e6, 160e6))
+	if source, err := strconv.ParseInt(sourceBitrate(stream), 10, 64); err == nil && source > budget {
+		budget = source
+	}
+	return strconv.FormatInt(budget, 10)
+}
+
+func losslessWorkers(available int) int {
+	return max(1, min(available, 8))
 }
 
 func escapeFilterPath(value string) string {
@@ -842,6 +872,14 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 		}
 	}
 	initialEncoder := encoder
+	if cfg.Quality == QualityPreserve {
+		private, err := os.MkdirTemp("", "dji-lut-reference-")
+		if err != nil {
+			return item, fmt.Errorf("create pixel reference workspace: %w", err)
+		}
+		defer os.RemoveAll(private)
+		cfg.referenceHash = filepath.Join(private, "pixels.sha256")
+	}
 	var fallbackReason string
 	var metalFallback string
 	var outputProbe Probe
@@ -862,6 +900,17 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 			return item, closeErr
 		}
 		command := buildFFmpegCommand(cfg, filterFile, tempName, encoder)
+		if emit != nil {
+			emit(Event{Type: "item_progress", Path: file.relative, Stage: "encoding"})
+		}
+		if cfg.Quality == QualityPreserve {
+			command, err = withPixelReference(command, cfg.referenceHash)
+			if err != nil {
+				os.Remove(tempName)
+				return item, err
+			}
+			_ = os.Remove(cfg.referenceHash)
+		}
 		logRel := filepath.Join("logs", filepath.FromSlash(file.relative)+".ffmpeg.log")
 		logPath := filepath.Join(cfg.outputRoot, logRel)
 		item.LogFile = filepath.ToSlash(logRel)
@@ -878,6 +927,9 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 			}
 		}
 		if !cfg.Metal || metalFallback != "" {
+			if cfg.referenceHash != "" {
+				_ = os.Remove(cfg.referenceHash)
+			}
 			stderrTail, encodeErr = runFFmpeg(ctx, command, file.duration, progress, logPath)
 		}
 		if encodeErr == nil {
@@ -906,8 +958,28 @@ func encodeFile(ctx context.Context, cfg normalizedConfig, file filePlan, item I
 				encodeErr = fmt.Errorf("output validation failed: %s", strings.Join(problems, "; "))
 			}
 		}
-		if encodeErr == nil && cfg.Metal && metalFallback == "" {
+		if encodeErr == nil && cfg.Metal && metalFallback == "" && cfg.Quality != QualityPreserve {
 			encodeErr = validateMetalPresentationTimes(ctx, cfg, file, tempName)
+		}
+		if encodeErr == nil && cfg.Quality == QualityPreserve {
+			if progress != nil {
+				progress(99.9)
+			}
+			if emit != nil {
+				emit(Event{Type: "item_progress", Path: file.relative, Stage: "verifying", Percent: 99.9, Message: "Validating lossless export"})
+			}
+			var expected string
+			expected, encodeErr = readPixelReference(cfg.referenceHash)
+			if encodeErr == nil {
+				var verified readbackResult
+				verified, encodeErr = verifyExportReadback(ctx, cfg, file, tempName, expected)
+				if encodeErr == nil {
+					item.EncodingLossless = true
+					item.PixelSHA256 = verified.PixelSHA256
+					item.ReadbackDecoder = verified.RequestedDecoder
+					item.ReadbackSoftwareRetry = verified.RetriedSoftware
+				}
+			}
 		}
 		if encodeErr == nil {
 			outputHash, encodeErr = hashFile(tempName)

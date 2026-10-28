@@ -26,6 +26,7 @@ type normalizedConfig struct {
 	filterThreads int
 	crf           int
 	preset        string
+	referenceHash string
 }
 
 func normalizeConfig(c Config) (normalizedConfig, error) {
@@ -54,8 +55,8 @@ func normalizeConfig(c Config) (normalizedConfig, error) {
 	if quality == "" {
 		quality = QualityBalanced
 	}
-	if quality != QualityBalanced && quality != QualityDetail {
-		return normalizedConfig{}, fmt.Errorf("unsupported quality %q (expected balanced or detail)", quality)
+	if quality != QualityBalanced && quality != QualityDetail && quality != QualityPreserve {
+		return normalizedConfig{}, fmt.Errorf("unsupported quality %q (expected balanced, detail or preserve)", quality)
 	}
 	encoder := c.Encoder
 	if encoder == "" {
@@ -97,6 +98,9 @@ func normalizeConfig(c Config) (normalizedConfig, error) {
 	preset := c.Preset
 	if preset == "" {
 		preset = "medium"
+		if quality == QualityPreserve {
+			preset = "ultrafast"
+		}
 	}
 	ffmpeg := c.FFmpeg
 	if ffmpeg == "" {
@@ -157,6 +161,15 @@ func defaultEncoder(cfg normalizedConfig, available map[string]bool) (EncoderMod
 }
 
 func defaultEncoderForPlatform(cfg normalizedConfig, available map[string]bool, goos, goarch string) (EncoderMode, error) {
+	if cfg.Quality == QualityPreserve {
+		if cfg.Encoder == EncoderVideoToolbox {
+			return "", errors.New("VideoToolbox does not provide verified lossless encoding; use auto or x265")
+		}
+		if !available["libx265"] {
+			return "", errors.New("lossless encoding requires libx265")
+		}
+		return EncoderX265, nil
+	}
 	if cfg.Encoder == EncoderX265 {
 		if !available["libx265"] {
 			return "", errors.New("ffmpeg does not provide libx265")

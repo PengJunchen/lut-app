@@ -45,12 +45,13 @@ kernel void apply(device const ushort *src [[buffer(0)]],
 }
 """
 
+struct FrameSlot { let source: MTLBuffer; let destination: MTLBuffer }
+
 final class LUT {
     let queue: MTLCommandQueue
     let pipeline: MTLComputePipelineState
     let table: MTLBuffer
-    let source: MTLBuffer
-    let destination: MTLBuffer
+    let slots: [FrameSlot]
     let count: Int
     let bytes: Int
     let grid: Int
@@ -101,26 +102,29 @@ final class LUT {
               let destination = device.makeBuffer(length: bytes, options: .storageModeShared) else {
             throw Failure.invalid("Metal buffer allocation failed")
         }
-        self.table = table; self.source = source; self.destination = destination
+        guard let source2 = device.makeBuffer(length: bytes, options: .storageModeShared),
+              let destination2 = device.makeBuffer(length: bytes, options: .storageModeShared) else {
+            throw Failure.invalid("Metal buffer allocation failed")
+        }
+        self.table = table
+        self.slots = [FrameSlot(source: source, destination: destination), FrameSlot(source: source2, destination: destination2)]
     }
 
-    func apply() throws {
+    func submit(_ slot: FrameSlot) throws -> MTLCommandBuffer {
         guard let command = queue.makeCommandBuffer(), let encoder = command.makeComputeCommandEncoder() else {
             throw Failure.invalid("Metal command allocation failed")
         }
         var params = SIMD2<UInt32>(UInt32(count), UInt32(grid))
         encoder.setComputePipelineState(pipeline)
-        encoder.setBuffer(source, offset: 0, index: 0)
-        encoder.setBuffer(destination, offset: 0, index: 1)
+        encoder.setBuffer(slot.source, offset: 0, index: 0)
+        encoder.setBuffer(slot.destination, offset: 0, index: 1)
         encoder.setBuffer(table, offset: 0, index: 2)
         encoder.setBytes(&params, length: MemoryLayout.size(ofValue: params), index: 3)
         encoder.dispatchThreads(MTLSize(width: count, height: 1, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: min(256, pipeline.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
         encoder.endEncoding()
         command.commit()
-        command.waitUntilCompleted()
-        if let error = command.error { throw error }
-        try check(command.status == .completed, "Metal command did not complete")
+        return command
     }
 }
 
@@ -181,6 +185,42 @@ struct Cursor {
 struct FrameCode {
     var flags = 8192, multiplier = 1, size = 0, stream = 0, reserved = 0, header = 0
 }
+
+// The reader and ordered writer share a bounded set of buffers. A slot is not
+// reused until its GPU command and output write have both completed.
+final class OrderedWriter {
+    private let queue = DispatchQueue(label: "metal-lut.output", autoreleaseFrequency: .workItem)
+    private let pending = DispatchSemaphore(value: 8)
+    private let lock = NSLock()
+    private var failure: Error?
+    func checkFailure() throws {
+        lock.lock(); let error = failure; lock.unlock()
+        if let error = error { throw error }
+    }
+    func enqueue(_ body: @escaping () throws -> Void) {
+        pending.wait()
+        queue.async {
+            defer { self.pending.signal() }
+            do { try body() }
+            catch {
+                self.lock.lock()
+                if self.failure == nil { self.failure = error }
+                self.lock.unlock()
+                // A failed output/GPU job is terminal. Exit this dedicated
+                // helper even when stdin is a pipe held open by its producer;
+                // the parent rejects the candidate and cleans up its children.
+                fputs("Metal LUT output failed: \(error)\n", stderr)
+                Darwin._exit(1)
+            }
+        }
+    }
+    func data(_ bytes: Data) {
+        enqueue { try self.checkFailure(); try writeData(bytes) }
+    }
+    func drain() { queue.sync {} }
+    func finish() throws { drain(); try checkFailure() }
+}
+
 final class Bridge {
     let lut: LUT
     let width: Int, height: Int
@@ -189,6 +229,9 @@ final class Bridge {
     var streams = 0
     var frames = 0
     var header = Data()
+    let writer = OrderedWriter()
+    let available = DispatchSemaphore(value: 2)
+    var nextSlot = 0
 
     init(_ lut: LUT, _ width: Int, _ height: Int) { self.lut = lut; self.width = width; self.height = height }
     func uint() throws -> Int {
@@ -248,13 +291,35 @@ final class Bridge {
         try c.skip(extra)
         try check(try c.uint() == width && c.uint() == height, "Video dimensions changed")
     }
+    func frame(_ header: Data, _ size: Int) throws {
+        available.wait()
+        var queued = false
+        defer { if !queued { available.signal() } }
+        try writer.checkFailure()
+        let slot = lut.slots[nextSlot]
+        nextSlot = (nextSlot + 1) % lut.slots.count
+        try readInto(slot.source.contents(), size)
+        let command = try autoreleasepool { try lut.submit(slot) }
+        writer.enqueue {
+            defer { self.available.signal() }
+            // Wait even on a previous write failure so the slot stays alive
+            // until the GPU has finished accessing shared memory.
+            command.waitUntilCompleted()
+            try self.writer.checkFailure()
+            if let error = command.error { throw error }
+            try check(command.status == .completed, "Metal command did not complete")
+            try writeData(header)
+            try writeFrom(slot.destination.contents(), size)
+        }
+        queued = true
+    }
     func run() throws {
+        defer { writer.drain() }
         let id = try readData(25)
         try check(id == Data("nut/multimedia container\0".utf8), "Expected NUT pipe")
-        try writeData(id)
-        let scratch = UnsafeMutableRawPointer.allocate(byteCount: 1<<20, alignment: 16)
-        defer { scratch.deallocate() }
+        writer.data(id)
         while true {
+            try writer.checkFailure()
             let byte = fgetc(stdin)
             if byte == EOF {
                 try check(feof(stdin) != 0 && frames > 0, "No complete video frames")
@@ -274,7 +339,7 @@ final class Bridge {
                 case [78,75,228,173,238,202,69,105], [78,73,171,104,181,150,186,120], [78,88,221,103,47,35,230,78]: break
                 default: throw Failure.invalid("Unknown container packet")
                 }
-                try writeData(header); try writeData(data)
+                writer.data(header); writer.data(data)
                 continue
             }
             let code = codes[Int(byte)]
@@ -296,22 +361,21 @@ final class Bridge {
             for _ in 0..<reserved { _ = try uint() }
             try check(size > 4096 || headerIndex == 0, "Elided packet headers unsupported")
             if flags & 64 != 0 { header.append(try readData(4)) }
-            try writeData(header)
             if stream == videoID {
                 try check(flags & 256 == 0 && size == lut.bytes, "Unexpected video frame layout")
-                try readInto(lut.source.contents(), size)
-                try autoreleasepool { try lut.apply() }
-                try writeFrom(lut.destination.contents(), size)
+                try frame(header, size)
                 frames += 1
             } else {
+                writer.data(header)
                 var remaining = size
                 while remaining > 0 {
                     let n = min(remaining, 1<<20)
-                    try readInto(scratch, n); try writeFrom(scratch, n)
+                    writer.data(try readData(n))
                     remaining -= n
                 }
             }
         }
+        try writer.finish()
         try check(fflush(stdout) == 0, "Cannot flush output stream")
         fputs("Metal LUT completed: \(frames) frames\n", stderr)
     }

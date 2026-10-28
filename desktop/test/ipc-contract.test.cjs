@@ -77,7 +77,7 @@ test('English locale validation errors remain strict and localized', () => {
 });
 
 test('encoding quality is explicitly selected from the supported modes', () => {
-  for (const quality of ['balanced', 'detail']) {
+  for (const quality of ['balanced', 'detail', 'preserve']) {
     assert.equal(parseInvocation('/api/preview', {
       method: 'POST', body: JSON.stringify({input:'/source', quality}),
     }).body.quality, quality);

@@ -16,10 +16,11 @@ type QualityMode string
 const (
 	QualityBalanced QualityMode = "balanced"
 	QualityDetail   QualityMode = "detail"
+	QualityPreserve QualityMode = "preserve"
 )
 
 // EncoderMode selects the video encoder. Auto prefers VideoToolbox on macOS,
-// except detail quality on Intel, with x265 fallback elsewhere.
+// except detail quality on Intel and lossless encoding, which require x265.
 type EncoderMode string
 
 const (
@@ -98,6 +99,7 @@ type ItemPlan struct {
 // batch progress. Callbacks are serialized by the engine.
 type Event struct {
 	Type           string      `json:"type"`
+	Stage          string      `json:"stage,omitempty"` // encoding/verifying; empty retains the current stage.
 	Message        string      `json:"message,omitempty"`
 	Path           string      `json:"path,omitempty"`
 	Percent        float64     `json:"percent,omitempty"`
@@ -109,32 +111,36 @@ type Event struct {
 
 // ItemReport records the decision and result for one input file.
 type ItemReport struct {
-	Input           string  `json:"input"`
-	Output          string  `json:"output"`
-	Action          string  `json:"action"`
-	Status          string  `json:"status"`
-	Profile         string  `json:"profile,omitempty"`
-	Camera          string  `json:"camera,omitempty"`
-	LUTFile         string  `json:"lut_file,omitempty"`
-	LUTName         string  `json:"lut_name,omitempty"`
-	LUTVersion      string  `json:"lut_version,omitempty"`
-	LUTSHA256       string  `json:"lut_sha256,omitempty"`
-	SourceGamma     string  `json:"source_gamma,omitempty"`
-	Encoder         string  `json:"encoder,omitempty"`
-	LUTBackend      string  `json:"lut_backend,omitempty"`
-	Reason          string  `json:"reason,omitempty"`
-	InputBytes      int64   `json:"input_bytes"`
-	OutputBytes     int64   `json:"output_bytes,omitempty"`
-	BytesCopied     int64   `json:"bytes_copied,omitempty"`
-	InputSHA256     string  `json:"input_sha256,omitempty"`
-	OutputSHA256    string  `json:"output_sha256,omitempty"`
-	OutputVerified  bool    `json:"output_verified,omitempty"`
-	SourceMetadata  string  `json:"source_metadata,omitempty"`
-	LogFile         string  `json:"log_file,omitempty"`
-	Error           string  `json:"error,omitempty"`
-	ConfigKey       string  `json:"config_key,omitempty"`
-	DurationSeconds float64 `json:"duration_seconds,omitempty"`
-	NeedsReview     bool    `json:"needs_review,omitempty"`
+	Input                 string  `json:"input"`
+	Output                string  `json:"output"`
+	Action                string  `json:"action"`
+	Status                string  `json:"status"`
+	Profile               string  `json:"profile,omitempty"`
+	Camera                string  `json:"camera,omitempty"`
+	LUTFile               string  `json:"lut_file,omitempty"`
+	LUTName               string  `json:"lut_name,omitempty"`
+	LUTVersion            string  `json:"lut_version,omitempty"`
+	LUTSHA256             string  `json:"lut_sha256,omitempty"`
+	SourceGamma           string  `json:"source_gamma,omitempty"`
+	Encoder               string  `json:"encoder,omitempty"`
+	LUTBackend            string  `json:"lut_backend,omitempty"`
+	Reason                string  `json:"reason,omitempty"`
+	InputBytes            int64   `json:"input_bytes"`
+	OutputBytes           int64   `json:"output_bytes,omitempty"`
+	BytesCopied           int64   `json:"bytes_copied,omitempty"`
+	InputSHA256           string  `json:"input_sha256,omitempty"`
+	OutputSHA256          string  `json:"output_sha256,omitempty"`
+	OutputVerified        bool    `json:"output_verified,omitempty"`
+	EncodingLossless      bool    `json:"encoding_lossless,omitempty"`
+	PixelSHA256           string  `json:"pixel_sha256,omitempty"`
+	ReadbackDecoder       string  `json:"readback_decoder,omitempty"`
+	ReadbackSoftwareRetry bool    `json:"readback_software_retry,omitempty"`
+	SourceMetadata        string  `json:"source_metadata,omitempty"`
+	LogFile               string  `json:"log_file,omitempty"`
+	Error                 string  `json:"error,omitempty"`
+	ConfigKey             string  `json:"config_key,omitempty"`
+	DurationSeconds       float64 `json:"duration_seconds,omitempty"`
+	NeedsReview           bool    `json:"needs_review,omitempty"`
 }
 
 // Summary contains the final per-batch counts.

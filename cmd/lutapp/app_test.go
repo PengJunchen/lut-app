@@ -135,6 +135,30 @@ func TestQualityDefaultsValidationAndPreviewInvalidation(t *testing.T) {
 	}
 }
 
+func TestLosslessQualityPersistsThroughCLIAndPreview(t *testing.T) {
+	input := t.TempDir()
+	app := newApplication(engine.Config{Manifest: testManifest(), Quality: engine.QualityPreserve, Metal: true}, nil, input)
+	defaults := app.Bootstrap().(map[string]any)["defaults"].(map[string]any)
+	if defaults["quality"] != engine.QualityPreserve || defaults["metal"] != true {
+		t.Fatalf("lossless defaults changed: %#v", defaults)
+	}
+	cfg, err := app.configFor(frontendRequest{Input: input, Quality: engine.QualityPreserve, Metal: true})
+	if err != nil || cfg.Quality != engine.QualityPreserve || !cfg.Metal {
+		t.Fatalf("lossless request changed: %#v, %v", cfg, err)
+	}
+	if opts, err := parseCLI([]string{"--quality", "preserve", "--metal"}, input); err != nil || opts.qualityText != "preserve" || !opts.metal {
+		t.Fatalf("lossless CLI = %#v, %v", opts, err)
+	}
+	request := json.RawMessage(`{"input":` + quoteJSON(t, input) + `,"quality":"balanced"}`)
+	if _, err := app.Preview(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	changed := json.RawMessage(`{"input":` + quoteJSON(t, input) + `,"quality":"preserve"}`)
+	if _, err := app.Start(t.Context(), changed); err == nil || !strings.Contains(err.Error(), "设置已改变") {
+		t.Fatalf("lossless change must invalidate preview: %v", err)
+	}
+}
+
 func TestMetalDefaultsCLIAndPreviewInvalidation(t *testing.T) {
 	input := t.TempDir()
 	app := newApplication(engine.Config{Manifest: testManifest()}, nil, input)
@@ -460,4 +484,20 @@ func quoteJSON(t *testing.T, value string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func TestVerificationStageIsReportedUntilItemCompletes(t *testing.T) {
+	app := newApplication(engine.Config{}, nil, t.TempDir())
+	app.onEvent(engine.Event{Type: "item_started", Path: "clip.mp4"})
+	if app.state.Stage != "encoding" {
+		t.Fatalf("stage = %q", app.state.Stage)
+	}
+	app.onEvent(engine.Event{Type: "item_progress", Path: "clip.mp4", Stage: "verifying", Percent: 99.9})
+	if app.state.Stage != "verifying" {
+		t.Fatalf("stage = %q", app.state.Stage)
+	}
+	app.onEvent(engine.Event{Type: "item_completed", Path: "clip.mp4"})
+	if app.state.Stage != "" {
+		t.Fatalf("completed stage = %q", app.state.Stage)
+	}
 }
