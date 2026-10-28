@@ -1,14 +1,20 @@
 # 更新日志
 
-本文件记录面向社区的版本变更。项目源码中的历史开发版本号不代表已公开发行版本；公开 RC 使用下方 `0.0.1-rc.0` 记录。
+本文件记录面向社区的版本变更。项目源码中的历史开发版本号不代表已公开发行版本；公开 RC 见下方记录。
 
-## 未发布 / Unreleased
+## [0.0.2-rc.0] — 2026-10-29
+
+Git tag：`rc0.0.2`。GitHub Release 显示标题：`DJI LUT 0.0.2-rc.0`。
+
+- 改善 macOS 解码与导出，增加默认关闭的 Apple Silicon Metal LUT 加速选项，并复用缓冲和解码校验。
+- 提供“细节优先”与“编码无损（大文件）”画质选择；编码无损在发布前核对处理后像素、时间戳和音频，校验失败不发布结果。
+- 统一 Rec.709 输出声明，完善均衡码率预算和校验阶段提示，默认仍为均衡画质、Metal 关闭。
 
 - 页面支持中文与 English 即时切换，覆盖分步和经典模式、预览、进度、资源清单与已知诊断；有效预览与当前批次不会因语言切换重置。
 - Electron 记住本机语言偏好，并同步原生菜单、窗口标题、目录选择和报告导出提示。浏览器模式使用当前来源的本地语言偏好。
 - 新增 [English README](README.en.md) 和[本地化维护说明](docs/LOCALIZATION.md)，与中文文档保持能力、下载版本和许可边界一致。
 
-These changes are available in source builds. The published `rc0.0.1` packages still use the Chinese interface; the release tag and downloads have not been replaced.
+编码无损仅保证处理后 10-bit YUV 帧的编码与解码一致，不表示原片或 LUT 变换无损；文件可能明显增大，导出也会较慢。
 
 ## [0.0.1-rc.0] — 2026-10-08 — 首个公开候选版本
 

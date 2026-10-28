@@ -15,11 +15,11 @@
 
 ## 维护者操作
 
-先在开发分支更新版本和 `CHANGELOG.md`，审核变更后提交并通过 PR 合入 `main`。以下是首个 RC 的例子：
+先在开发分支更新版本和 `CHANGELOG.md`，审核变更后提交并通过 PR 合入 `main`。以下以 `rc0.0.2` 为例：
 
 ```sh
-node desktop/scripts/release-version.cjs set 0.0.1-rc.0
-node desktop/scripts/release-version.cjs check-tag rc0.0.1
+node desktop/scripts/release-version.cjs set 0.0.2-rc.0
+node desktop/scripts/release-version.cjs check-tag rc0.0.2
 git diff
 ```
 
@@ -28,9 +28,9 @@ git diff
 ```sh
 git switch main
 git pull --ff-only
-node desktop/scripts/release-version.cjs check-tag rc0.0.1
-git tag -a rc0.0.1 -m "DJI LUT 0.0.1-rc.0"
-git push origin rc0.0.1
+node desktop/scripts/release-version.cjs check-tag rc0.0.2
+git tag -a rc0.0.2 -m "DJI LUT 0.0.2-rc.0"
+git push origin rc0.0.2
 ```
 
 不匹配的版本、非支持格式的 tag、失败的测试或任一目标构建失败都会阻止发布。已经公开的版本 tag 不应移动；修正已发布版本时创建新的版本和 tag。

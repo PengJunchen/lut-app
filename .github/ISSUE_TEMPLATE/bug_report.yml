@@ -11,7 +11,7 @@ body:
     attributes:
       label: 应用版本
       description: 填写 Release 页面显示的版本或 tag。
-      placeholder: 0.0.1-rc.0
+      placeholder: 0.0.2-rc.0
     validations:
       required: true
   - type: dropdown

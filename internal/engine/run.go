@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const engineVersion = "0.0.1-rc.0"
+const engineVersion = "0.0.2-rc.0"
 
 // Run plans and processes the configured folder. Per-file failures are
 // recorded in the report and do not stop other files. Cancel by cancelling ctx.

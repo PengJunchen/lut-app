@@ -6,7 +6,7 @@ DJI LUT is an offline video color-restoration tool. It reads DJI video metadata,
 
 The project maintains a catalog of official DJI LUTs and expands automatic conversion coverage over time. The catalog spans DJI product lines, but automatic conversion is limited to footage with an exact camera, Log profile, and look mapping in `assets/catalog.json`. A catalog entry does not by itself mean that a camera is supported for automatic conversion or has passed camera-footage acceptance testing.
 
-[rc0.0.1 downloads](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) · [Usage guide (Chinese)](docs/USAGE.zh-CN.md) · [Architecture (Chinese)](docs/ARCHITECTURE.zh-CN.md) · [Contributing (Chinese)](CONTRIBUTING.md) · [Release process (Chinese)](docs/RELEASING.zh-CN.md)
+[rc0.0.2 downloads](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.2) · [Usage guide (Chinese)](docs/USAGE.zh-CN.md) · [Architecture (Chinese)](docs/ARCHITECTURE.zh-CN.md) · [Contributing (Chinese)](CONTRIBUTING.md) · [Release process (Chinese)](docs/RELEASING.zh-CN.md)
 
 ## Current coverage
 
@@ -25,19 +25,19 @@ The scanner discovers candidate videos by **38 filename extensions**. An extensi
 
 ## Interface language
 
-The current source build offers an in-app selector between Simplified Chinese and English. The Electron desktop app stores the selection in its `userData` preferences; the local browser app stores it in the browser's `localStorage`. Browser storage is scoped to an origin, including the local service port, so a restart that uses a different port may make the previous language preference unavailable. The public `0.0.1-rc.0` installers listed below predate the interface change and still have a Chinese-only interface.
+Release packages from `rc0.0.2` offer an in-app selector between Simplified Chinese and English. The Electron desktop app stores the selection in its `userData` preferences; the local browser app stores it in the browser's `localStorage`. Browser storage is scoped to an origin, including the local service port, so a restart that uses a different port may make the previous language preference unavailable.
 
 Use the header **Language** selector to choose 中文 or English in either interface mode, including during processing. Switching preserves settings, a valid preview and the active batch; official LUT names, paths and JSON reports retain their original values. See [Localization](docs/LOCALIZATION.md) for translation maintenance.
 
 ## Downloads and releases
 
-The current public RC has application version `0.0.1-rc.0`, Git tag **`rc0.0.1`**, and GitHub Release title `DJI LUT 0.0.1-rc.0`. Download the packages from the [rc0.0.1 Release page](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1):
+The current public RC has application version `0.0.2-rc.0`, Git tag **`rc0.0.2`**, and GitHub Release title `DJI LUT 0.0.2-rc.0`. Download the packages from the [rc0.0.2 Release page](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.2):
 
 | Platform | Download |
 | --- | --- |
-| macOS Apple Silicon | [DJI-LUT-macOS-AppleSilicon.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-macOS-AppleSilicon.zip) |
-| macOS Intel | [DJI-LUT-macOS-Intel.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-macOS-Intel.zip) |
-| Windows x64 | [DJI-LUT-Windows-x64.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-Windows-x64.zip) |
+| macOS Apple Silicon | [DJI-LUT-macOS-AppleSilicon.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.2/DJI-LUT-macOS-AppleSilicon.zip) |
+| macOS Intel | [DJI-LUT-macOS-Intel.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.2/DJI-LUT-macOS-Intel.zip) |
+| Windows x64 | [DJI-LUT-Windows-x64.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.2/DJI-LUT-Windows-x64.zip) |
 
 The release targets macOS 13 or later (Apple Silicon and Intel) and Windows 10 x64. Pull requests and `main` run native build checks on all three target platforms; pushing an `rc*` or `v*` tag builds the three release packages and attaches them to a GitHub Release. Maintainers must update the application version fields in a commit merged to `main` before creating a tag. The release workflow checks the source version against the tag; it does not rewrite version files. Build status is available in [GitHub Actions](https://github.com/PengJunchen/lut-app/actions). See the [release process (Chinese)](docs/RELEASING.zh-CN.md) for the full steps.
 

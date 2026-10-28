@@ -6,7 +6,7 @@ DJI LUT 是一款离线运行的视频色彩还原工具。它读取 DJI 视频�
 
 项目维护 DJI 官方 LUT 目录，并逐步扩展自动转换覆盖。目录面向 DJI 全系列，但自动转换只适用于 `assets/catalog.json` 中已有精确机型、Log 模式和风格映射的素材；目录收录不代表某款相机已获自动支持或完成实机验收。
 
-[rc0.0.1 下载](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1) · [使用说明（中文）](docs/USAGE.zh-CN.md) · [技术架构（中文）](docs/ARCHITECTURE.zh-CN.md) · [贡献指南（中文）](CONTRIBUTING.md) · [发布流程（中文）](docs/RELEASING.zh-CN.md)
+[rc0.0.2 下载](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.2) · [使用说明（中文）](docs/USAGE.zh-CN.md) · [技术架构（中文）](docs/ARCHITECTURE.zh-CN.md) · [贡献指南（中文）](CONTRIBUTING.md) · [发布流程（中文）](docs/RELEASING.zh-CN.md)
 
 ## 当前覆盖范围
 
@@ -25,19 +25,19 @@ DJI LUT 是一款离线运行的视频色彩还原工具。它读取 DJI 视频�
 
 ## 界面语言
 
-当前源码构建提供简体中文与 English 界面切换。Electron 桌面版将语言选择保存在应用的 `userData` 偏好中；本机浏览器版将选择保存在浏览器的 `localStorage`。浏览器存储按来源（包括本机服务端口）隔离，因此如果服务重启后使用不同端口，之前的语言偏好可能不可用。下方公开的 `0.0.1-rc.0` 安装包早于界面语言改动，仍只有中文界面。
+从 `rc0.0.2` 起，发行包提供简体中文与 English 界面切换。Electron 桌面版将语言选择保存在应用的 `userData` 偏好中；本机浏览器版将选择保存在浏览器的 `localStorage`。浏览器存储按来源（包括本机服务端口）隔离，因此如果服务重启后使用不同端口，之前的语言偏好可能不可用。
 
 在顶部“语言 / Language”选择中文或 English，两种界面模式和处理期间均可切换。切换保留当前设置、有效预览与处理批次；官方 LUT 名称、文件路径和 JSON 报告保持原值。维护翻译见[本地化说明 / Localization](docs/LOCALIZATION.md)。
 
 ## 下载与发布
 
-当前公开 RC 的应用版本为 `0.0.1-rc.0`，Git tag 为 **`rc0.0.1`**，GitHub Release 标题为 `DJI LUT 0.0.1-rc.0`。可在 [rc0.0.1 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.1)下载：
+当前公开 RC 的应用版本为 `0.0.2-rc.0`，Git tag 为 **`rc0.0.2`**，GitHub Release 标题为 `DJI LUT 0.0.2-rc.0`。可在 [rc0.0.2 Release 页面](https://github.com/PengJunchen/lut-app/releases/tag/rc0.0.2)下载：
 
 | 平台 | 下载 |
 | --- | --- |
-| macOS Apple Silicon | [DJI-LUT-macOS-AppleSilicon.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-macOS-AppleSilicon.zip) |
-| macOS Intel | [DJI-LUT-macOS-Intel.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-macOS-Intel.zip) |
-| Windows x64 | [DJI-LUT-Windows-x64.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.1/DJI-LUT-Windows-x64.zip) |
+| macOS Apple Silicon | [DJI-LUT-macOS-AppleSilicon.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.2/DJI-LUT-macOS-AppleSilicon.zip) |
+| macOS Intel | [DJI-LUT-macOS-Intel.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.2/DJI-LUT-macOS-Intel.zip) |
+| Windows x64 | [DJI-LUT-Windows-x64.zip](https://github.com/PengJunchen/lut-app/releases/download/rc0.0.2/DJI-LUT-Windows-x64.zip) |
 
 发行目标为 macOS 13 或更新版本（Apple Silicon 与 Intel）以及 Windows 10 x64。PR 和 `main` 的自动检查在三个目标平台运行原生构建验证；推送 `rc*` 或 `v*` tag 会构建三种发行包并附加到 GitHub Release。维护者须先在合入 `main` 的提交中同步应用版本字段，再创建 tag；发布工作流按 tag 校验源码版本，不临时改写版本文件。构建状态见 [GitHub Actions](https://github.com/PengJunchen/lut-app/actions)。完整步骤见[发布流程（中文）](docs/RELEASING.zh-CN.md)。
 
